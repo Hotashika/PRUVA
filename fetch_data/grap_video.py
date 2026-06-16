@@ -1,27 +1,53 @@
 import subprocess
 import time
-
 import cv2
+import platform
 from PyQt5.QtGui import QImage
-from scapy.layers.l2 import ARP, Ether
-from scapy.sendrecv import srp
 
 JETSON_MAC = "8c:b8:7e:04:20:a9".lower()
 PORT = 5000
 
 
 def get_ip_by_mac(target_mac: str) -> str | None:
-    result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
-    for line in result.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[2].lower() == target_mac:
-            return parts[0]
+    # Önce ARP cache'e bak (platform-aware)
+    if platform.system() == "Windows":
+        result = subprocess.run(["arp", "-a"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            # Windows formatı: IP  MAC  type
+            if len(parts) >= 2:
+                mac = parts[1].replace("-", ":").lower()
+                if mac == target_mac:
+                    return parts[0]
+    else:
+        result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2].lower() == target_mac:
+                return parts[0]
 
-    pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst="192.168.1.0/24")
-    answered, _ = srp(pkt, timeout=3, verbose=False)
-    for _, rcv in answered:
-        if rcv[ARP].hwsrc.lower() == target_mac:
-            return rcv[ARP].psrc
+    # ARP cache'de yoksa Scapy ile tara
+    try:
+        from scapy.layers.l2 import ARP, Ether
+        from scapy.sendrecv import srp
+        import netifaces
+
+        # Aktif interface'in subnet'ini bul
+        gws = netifaces.gateways()
+        iface = gws['default'][netifaces.AF_INET][1]
+        addrs = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
+        ip = addrs['addr']
+        netmask = addrs['netmask']
+        # Basit /24 varsayımı yerine gerçek subnet
+        prefix = ".".join(ip.split(".")[:3]) + ".0/24"
+
+        pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=prefix)
+        answered, _ = srp(pkt, timeout=3, verbose=False)
+        for _, rcv in answered:
+            if rcv[ARP].hwsrc.lower() == target_mac:
+                return rcv[ARP].psrc
+    except Exception as e:
+        print(f"Scapy tarama hatası: {e}")
 
     return None
 

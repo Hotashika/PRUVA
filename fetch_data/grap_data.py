@@ -1,6 +1,6 @@
 import requests
 import json
-from utils import get_jetson_ip
+from fetch_data.utils import get_jetson_ip
 
 JETSON_IP = get_jetson_ip()
 PORT = 5001
