@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>gorevplanla</class>
+ <widget class="QDialog" name="gorevplanla">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>461</width>
+    <height>538</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Dialog</string>
+  </property>
+  <widget class="QPushButton" name="pushButton">
+   <property name="geometry">
+    <rect>
+     <x>120</x>
+     <y>380</y>
+     <width>181</width>
+     <height>51</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QPushButton {
+    background-color: #3498db; /* Buraya yazılıyor */
+    color: white;              /* Yazı rengi beyaz olsun */
+    border-radius: 10px;       /* Köşeler yuvarlak olsun */
+    font-weight: bold;         /* Yazılar kalın olsun */
+    padding: 10px;             /* Buton biraz etli dursun */
+}
+
+QPushButton:hover {
+    background-color: #2980b9; /* Fare üzerine gelince biraz koyulaşsın */
+}</string>
+   </property>
+   <property name="text">
+    <string>CHOOSE TXT FILE</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="pushButton_2">
+   <property name="geometry">
+    <rect>
+     <x>110</x>
+     <y>450</y>
+     <width>211</width>
+     <height>51</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QPushButton {
+    background-color: #27ae60;
+    color: white;
+    border-radius: 10px;
+    font-weight: bold;
+    padding: 10px;
+}
+QPushButton:hover { background-color: #2ecc71; }</string>
+   </property>
+   <property name="text">
+    <string>UPLOAD WAYPOINTS</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="pushButton_4">
+   <property name="geometry">
+    <rect>
+     <x>420</x>
+     <y>10</y>
+     <width>31</width>
+     <height>31</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QPushButton {
+    background-color: #c0392b; /* Koyu Kırmızı */
+    color: white;
+    border-radius: 10px;
+    font-weight: bold;
+    border: 2px solid #a93226;
+}</string>
+   </property>
+   <property name="text">
+    <string>X</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="pushButton_3">
+   <property name="geometry">
+    <rect>
+     <x>230</x>
+     <y>10</y>
+     <width>191</width>
+     <height>31</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">/* Nesnenin genel stili */
+border: 2px solid #87CEEB;   /* 2 piksel kalınlığında, açık mavi sert kenarlık */
+background-color: #FFFFFF;    /* İç renk tam beyaz */
+color: #333333;               /* Yazı rengi (koyu gri/siyah) */
+border-radius: 0px;           /* Köşelerin tamamen dik (sert) olması için 0 */
+padding: 5px 15px;            /* İçerideki yazının kenarlara yapışmaması için boşluk */
+font-weight: bold;            /* Yazıyı daha belirgin yapar */</string>
+   </property>
+   <property name="text">
+    <string>MISSION PLANNING</string>
+   </property>
+  </widget>
+  <widget class="QTableWidget" name="tableWidget">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>90</y>
+     <width>411</width>
+     <height>241</height>
+    </rect>
+   </property>
+   <row>
+    <property name="text">
+     <string>-</string>
+    </property>
+   </row>
+   <row>
+    <property name="text">
+     <string>-</string>
+    </property>
+   </row>
+   <row>
+    <property name="text">
+     <string>-</string>
+    </property>
+   </row>
+   <row>
+    <property name="text">
+     <string>-</string>
+    </property>
+   </row>
+   <column>
+    <property name="text">
+     <string>WAYPOINT</string>
+    </property>
+   </column>
+   <column>
+    <property name="text">
+     <string>LATITUDE</string>
+    </property>
+   </column>
+   <column>
+    <property name="text">
+     <string>LONGITUDE</string>
+    </property>
+   </column>
+   <item row="0" column="0">
+    <property name="text">
+     <string>GPS_P1</string>
+    </property>
+   </item>
+   <item row="0" column="1">
+    <property name="text">
+     <string>63.4412	</string>
+    </property>
+   </item>
+   <item row="0" column="2">
+    <property name="text">
+     <string>10.4015</string>
+    </property>
+   </item>
+   <item row="1" column="0">
+    <property name="text">
+     <string>GPS_P2</string>
+    </property>
+   </item>
+   <item row="1" column="1">
+    <property name="text">
+     <string>63.4425	</string>
+    </property>
+   </item>
+   <item row="1" column="2">
+    <property name="text">
+     <string>10.4032</string>
+    </property>
+   </item>
+   <item row="2" column="0">
+    <property name="text">
+     <string>GPS_P3</string>
+    </property>
+   </item>
+   <item row="2" column="1">
+    <property name="text">
+     <string>63.4438	</string>
+    </property>
+   </item>
+   <item row="2" column="2">
+    <property name="text">
+     <string>10.4055</string>
+    </property>
+   </item>
+   <item row="3" column="0">
+    <property name="text">
+     <string>GPS_P4</string>
+    </property>
+   </item>
+   <item row="3" column="1">
+    <property name="text">
+     <string>63.4442	</string>
+    </property>
+   </item>
+   <item row="3" column="2">
+    <property name="text">
+     <string>10.4080</string>
+    </property>
+   </item>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

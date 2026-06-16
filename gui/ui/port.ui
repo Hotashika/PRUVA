@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Dialog</class>
+ <widget class="QDialog" name="Dialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>518</width>
+    <height>347</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Dialog</string>
+  </property>
+  <widget class="QGroupBox" name="groupBox">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>30</y>
+     <width>341</width>
+     <height>251</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>LOCAL PORT</string>
+   </property>
+   <widget class="QLabel" name="label">
+    <property name="geometry">
+     <rect>
+      <x>40</x>
+      <y>40</y>
+      <width>171</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="styleSheet">
+     <string notr="true">/* Daha doygun açık mavi, beyaz yazılı ve sert hatlı stil */
+background-color: #4CAFEF;    /* Bir tık daha koyu ve doygun açık mavi */
+color: #FFFFFF;               /* Yazı rengi tam beyaz (net okunabilirlik için) */
+border: 2px solid #2980B9;    /* Sert çerçeve: Mavinin bir ton koyusu */
+padding: 5px 10px;            /* İç boşluk */
+border-radius: 0px;           /* Keskin ve sert köşeler */
+font-weight: bold;            /* Yazıyı kalın ve belirgin yapar */
+font-family: &quot;Segoe UI&quot;, Arial; /* Daha modern bir yazı tipi */</string>
+    </property>
+    <property name="text">
+     <string>ENTER LOCAL PORT</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="lineEdit">
+    <property name="geometry">
+     <rect>
+      <x>40</x>
+      <y>90</y>
+      <width>171</width>
+      <height>61</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string/>
+    </property>
+   </widget>
+   <widget class="QDialogButtonBox" name="buttonBox">
+    <property name="geometry">
+     <rect>
+      <x>130</x>
+      <y>160</y>
+      <width>181</width>
+      <height>61</height>
+     </rect>
+    </property>
+    <property name="standardButtons">
+     <set>QDialogButtonBox::StandardButton::Cancel|QDialogButtonBox::StandardButton::Ok</set>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QComboBox" name="comboBox">
+   <property name="geometry">
+    <rect>
+     <x>390</x>
+     <y>90</y>
+     <width>91</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">/* Daha doygun açık mavi, beyaz yazılı ve sert hatlı stil */
+background-color: #4CAFEF;    /* Bir tık daha koyu ve doygun açık mavi */
+color: #FFFFFF;               /* Yazı rengi tam beyaz (net okunabilirlik için) */
+border: 2px solid #2980B9;    /* Sert çerçeve: Mavinin bir ton koyusu */
+padding: 5px 10px;            /* İç boşluk */
+border-radius: 0px;           /* Keskin ve sert köşeler */
+font-weight: bold;            /* Yazıyı kalın ve belirgin yapar */
+font-family: &quot;Segoe UI&quot;, Arial; /* Daha modern bir yazı tipi */</string>
+   </property>
+   <item>
+    <property name="text">
+     <string>UDP</string>
+    </property>
+   </item>
+   <item>
+    <property name="text">
+     <string>TCP</string>
+    </property>
+   </item>
+   <item>
+    <property name="text">
+     <string>COM</string>
+    </property>
+   </item>
+  </widget>
+  <widget class="QComboBox" name="comboBox_2">
+   <property name="geometry">
+    <rect>
+     <x>390</x>
+     <y>150</y>
+     <width>91</width>
+     <height>51</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">/* Daha doygun açık mavi, beyaz yazılı ve sert hatlı stil */
+background-color: #4CAFEF;    /* Bir tık daha koyu ve doygun açık mavi */
+color: #FFFFFF;               /* Yazı rengi tam beyaz (net okunabilirlik için) */
+border: 2px solid #2980B9;    /* Sert çerçeve: Mavinin bir ton koyusu */
+padding: 5px 10px;            /* İç boşluk */
+border-radius: 0px;           /* Keskin ve sert köşeler */
+font-weight: bold;            /* Yazıyı kalın ve belirgin yapar */
+font-family: &quot;Segoe UI&quot;, Arial; /* Daha modern bir yazı tipi */</string>
+   </property>
+   <item>
+    <property name="text">
+     <string>57600</string>
+    </property>
+   </item>
+   <item>
+    <property name="text">
+     <string>115200</string>
+    </property>
+   </item>
+  </widget>
+  <widget class="QPushButton" name="pushButton">
+   <property name="geometry">
+    <rect>
+     <x>330</x>
+     <y>10</y>
+     <width>141</width>
+     <height>31</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">/* Nesnenin genel stili */
+border: 2px solid #87CEEB;   /* 2 piksel kalınlığında, açık mavi sert kenarlık */
+background-color: #FFFFFF;    /* İç renk tam beyaz */
+color: #333333;               /* Yazı rengi (koyu gri/siyah) */
+border-radius: 0px;           /* Köşelerin tamamen dik (sert) olması için 0 */
+padding: 5px 15px;            /* İçerideki yazının kenarlara yapışmaması için boşluk */
+font-weight: bold;            /* Yazıyı daha belirgin yapar */</string>
+   </property>
+   <property name="text">
+    <string>CONNECTIVITY</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="pushButton_2">
+   <property name="geometry">
+    <rect>
+     <x>470</x>
+     <y>10</y>
+     <width>31</width>
+     <height>29</height>
+    </rect>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QPushButton {
+    background-color: #c0392b; /* Koyu Kırmızı */
+    color: white;
+    border-radius: 10px;
+    font-weight: bold;
+    border: 2px solid #a93226;
+}</string>
+   </property>
+   <property name="text">
+    <string>X</string>
+   </property>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
