@@ -1,26 +1,141 @@
+import ipaddress
+import platform
+import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 from PyQt5.QtGui import QImage
-from scapy.layers.l2 import ARP, Ether
-from scapy.sendrecv import srp
+
+try:
+    from scapy.layers.l2 import ARP, Ether
+    from scapy.sendrecv import srp
+except Exception:
+    ARP = None
+    Ether = None
+    srp = None
+
 
 JETSON_MAC = "8c:b8:7e:04:20:a9".lower()
 PORT = 5000
 
 
-def get_ip_by_mac(target_mac: str) -> str | None:
-    result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
+def _subprocess_flags():
+    if platform.system().lower() == "windows":
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return 0
+
+
+def _arp_cache_ip(target_mac: str) -> str | None:
+    is_windows = platform.system().lower() == "windows"
+    formatted_mac = target_mac.lower().replace(":", "-" if is_windows else ":")
+
+    try:
+        result = subprocess.run(
+            ["arp", "-a"],
+            capture_output=True,
+            text=True,
+            creationflags=_subprocess_flags(),
+        )
+    except Exception:
+        return None
+
     for line in result.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[2].lower() == target_mac:
-            return parts[0]
+        if formatted_mac in line.lower():
+            match = re.search(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", line)
+            if match:
+                return match.group()
+
+    return None
+
+
+def _local_ipv4_networks():
+    try:
+        result = subprocess.check_output(
+            ["ipconfig"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=_subprocess_flags(),
+        )
+    except Exception:
+        return []
+
+    networks = []
+    current_ip = None
+    for line in result.splitlines():
+        ipv4_match = re.search(r"IPv4.*?:\s*([0-9.]+)", line)
+        mask_match = re.search(r"Subnet Mask.*?:\s*([0-9.]+)", line)
+
+        if ipv4_match:
+            current_ip = ipv4_match.group(1)
+        elif current_ip and mask_match:
+            try:
+                network = ipaddress.IPv4Network(
+                    f"{current_ip}/{mask_match.group(1)}",
+                    strict=False,
+                )
+                if not network.is_loopback:
+                    networks.append(network)
+            except Exception:
+                pass
+            current_ip = None
+
+    return networks
+
+
+def _ping_ip(ip: str) -> bool:
+    if platform.system().lower() == "windows":
+        command = ["ping", "-n", "1", "-w", "120", ip]
+    else:
+        command = ["ping", "-c", "1", "-W", "1", ip]
+
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_subprocess_flags(),
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _scan_network_for_mac(target_mac: str) -> str | None:
+    for network in _local_ipv4_networks():
+        hosts = [str(ip) for ip in network.hosts()]
+        if len(hosts) > 4096:
+            continue
+
+        with ThreadPoolExecutor(max_workers=64) as executor:
+            futures = [executor.submit(_ping_ip, ip) for ip in hosts]
+            for future in as_completed(futures):
+                future.result()
+
+        ip = _arp_cache_ip(target_mac)
+        if ip:
+            return ip
+
+    return None
+
+
+def get_ip_by_mac(target_mac: str) -> str | None:
+    ip = _arp_cache_ip(target_mac)
+    if ip:
+        return ip
+
+    ip = _scan_network_for_mac(target_mac)
+    if ip:
+        return ip
+
+    if platform.system().lower() == "windows" or srp is None:
+        return None
 
     pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst="192.168.1.0/24")
     answered, _ = srp(pkt, timeout=3, verbose=False)
     for _, rcv in answered:
-        if rcv[ARP].hwsrc.lower() == target_mac:
+        if rcv[ARP].hwsrc.lower() == target_mac.lower():
             return rcv[ARP].psrc
 
     return None
@@ -28,7 +143,6 @@ def get_ip_by_mac(target_mac: str) -> str | None:
 
 def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=None):
     url = f"http://{jetson_ip}:{PORT}/video_feed"
-
     cap = None
 
     while True:
@@ -61,7 +175,7 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
             ret, frame = cap.read()
             if not ret:
                 if log_callback:
-                    log_callback("Frame alınamadı, yeniden bağlanılıyor...")
+                    log_callback("Frame alinamadi, yeniden baglaniliyor...")
                 cap.release()
                 cap = cv2.VideoCapture(url)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -83,7 +197,8 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
                 if cv2.waitKey(1) == 27:
                     break
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
         if frame_callback is None:
             cv2.destroyAllWindows()
 
@@ -93,21 +208,15 @@ def start(jetson_ip: str | None = None, frame_callback=None, log_callback=None, 
     while ip is None:
         if stop_callback is not None and not stop_callback():
             return
-        message = "Jetson IP bulunamadı, tekrar deneniyor..."
+
+        message = "Jetson IP bulunamadi, tekrar deneniyor..."
         if log_callback:
             log_callback(message)
         else:
             print(message)
+
         time.sleep(1.0)
         ip = jetson_ip or get_ip_by_mac(JETSON_MAC)
-
-    if ip is None:
-        message = "Jetson bulunamadı, aynı ağda mısın?"
-        if log_callback:
-            log_callback(message)
-        else:
-            print(message)
-        return
 
     if log_callback:
         log_callback(f"Jetson IP: {ip}")
