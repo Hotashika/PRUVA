@@ -39,12 +39,12 @@ HEARTBEAT_TIMEOUT = 5.0
 def _get_grap_video_path():
     """
     Repo içinde birkaç olası konuma bakar:
-    Fetch Data / fetch_data / Fetch_Data
+    fetch_data / fetch_data / Fetch_Data
     """
     from pathlib import Path
     repo_root = Path(__file__).resolve().parent.parent
     candidates = [
-        repo_root / "Fetch Data" / "grap_video.py",
+        repo_root / "fetch_data" / "grap_video.py",
         repo_root / "fetch_data" / "grap_video.py",
         repo_root / "Fetch_Data" / "grap_video.py",
     ]

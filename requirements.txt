@@ -14,3 +14,4 @@ scapy
 pyqt5
 pymavlink
 flask
+netifaces

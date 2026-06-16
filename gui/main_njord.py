@@ -1,10 +1,6 @@
 import sys
 from PyQt5 import QtCore, QtWidgets
-
-try:
-    from gui.arayuz_yonetici_njord import NjordAnaEkran
-except ImportError:
-    from arayuz_yonetici_njord import NjordAnaEkran
+from gui.arayuz_yonetici_njord import NjordAnaEkran
 
 # Hata giderici yama
 for attr, val in [('Dec', 1), ('Flat', 0), 
