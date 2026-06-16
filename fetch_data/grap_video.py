@@ -3,53 +3,72 @@ import time
 import cv2
 import platform
 from PyQt5.QtGui import QImage
+import concurrent.futures
 
 JETSON_MAC = "8c:b8:7e:04:20:a9".lower()
 PORT = 5000
 
 
-def get_ip_by_mac(target_mac: str) -> str | None:
-    # Önce ARP cache'e bak (platform-aware)
+def _ping(ip: str):
+    """Tek bir IP'ye ping at (sessizce)."""
     if platform.system() == "Windows":
-        result = subprocess.run(["arp", "-a"], capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            parts = line.split()
-            # Windows formatı: IP  MAC  type
+        # -n 1 paket, -w 500ms timeout
+        args = ["ping", "-n", "1", "-w", "500", ip]
+    else:
+        # -c 1 paket, -W 1sn response timeout
+        args = ["ping", "-c", "1", "-W", "1", ip]
+
+    subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _get_local_subnet() -> str:
+    """Aktif interface'in /24 subnet'ini döndür."""
+    try:
+        import netifaces
+        gws = netifaces.gateways()
+        iface = gws["default"][netifaces.AF_INET][1]
+        ip = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]["addr"]
+        return ".".join(ip.split(".")[:3]) + ".{}"
+    except Exception:
+        return "192.168.1.{}"  # fallback
+
+
+def _parse_arp_cache(target_mac: str) -> str | None:
+    """ARP cache'den MAC'e karşılık gelen IP'yi bul."""
+    result = subprocess.run(
+        ["arp", "-a"] if platform.system() == "Windows" else ["arp", "-n"],
+        capture_output=True, text=True
+    )
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if platform.system() == "Windows":
+            # Windows: "  192.168.1.5    8c-b8-7e-04-20-a9    dynamic"
             if len(parts) >= 2:
                 mac = parts[1].replace("-", ":").lower()
                 if mac == target_mac:
                     return parts[0]
-    else:
-        result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            parts = line.split()
+        else:
+            # Linux: "192.168.1.5 ether 8c:b8:7e:04:20:a9 ..."
             if len(parts) >= 3 and parts[2].lower() == target_mac:
                 return parts[0]
-
-    # ARP cache'de yoksa Scapy ile tara
-    try:
-        from scapy.layers.l2 import ARP, Ether
-        from scapy.sendrecv import srp
-        import netifaces
-
-        # Aktif interface'in subnet'ini bul
-        gws = netifaces.gateways()
-        iface = gws['default'][netifaces.AF_INET][1]
-        addrs = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
-        ip = addrs['addr']
-        netmask = addrs['netmask']
-        # Basit /24 varsayımı yerine gerçek subnet
-        prefix = ".".join(ip.split(".")[:3]) + ".0/24"
-
-        pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=prefix)
-        answered, _ = srp(pkt, timeout=3, verbose=False)
-        for _, rcv in answered:
-            if rcv[ARP].hwsrc.lower() == target_mac:
-                return rcv[ARP].psrc
-    except Exception as e:
-        print(f"Scapy tarama hatası: {e}")
-
     return None
+
+
+def get_ip_by_mac(target_mac: str) -> str | None:
+    # 1. Önce ARP cache'e bak (hızlı)
+    ip = _parse_arp_cache(target_mac)
+    if ip:
+        return ip
+
+    # 2. Cache'de yoksa ping sweep ile ARP cache'i doldur
+    subnet = _get_local_subnet()
+    hosts = [subnet.format(i) for i in range(1, 255)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+        ex.map(_ping, hosts)
+
+    # 3. Tekrar cache'e bak
+    return _parse_arp_cache(target_mac)
 
 
 def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=None):
