@@ -33,6 +33,7 @@ def _patch_pyqt5_uic_enums():
     # Adding the aliases here keeps direct imports and main_njord.py launches consistent.
     aliases = {
         "Dec": 1,
+        "QLCDNumber::Mode::Dec": QtWidgets.QLCDNumber.Dec,
         "Flat": 0,
         "QDialogButtonBox::StandardButton::Cancel": QtWidgets.QDialogButtonBox.Cancel,
         "QDialogButtonBox::StandardButton::Ok": QtWidgets.QDialogButtonBox.Ok,
@@ -140,8 +141,18 @@ class NjordAnaEkran(QMainWindow):
         )
         self.label_7.setAlignment(ALIGN_CENTER)
 
-        self.label_2.setText("")
-        self.label_3.setText("")
+        self._log_etiketleri = [
+            self.label_2,
+            self.label_3,
+            self.label_9,
+            self.label_10,
+        ]
+        self._log_gecmisi = []
+        for etiket in self._log_etiketleri:
+            etiket.setText("")
+            etiket.setStyleSheet("")
+
+        self._arm_butonlarini_sabitle()
         self._camera_auto_started = False
 
     def showEvent(self, event):
@@ -197,42 +208,28 @@ class NjordAnaEkran(QMainWindow):
                     "font-weight: bold; border-radius: 5px;"
                 )
                 self.pushButton_wifi.setText(
-                    f"WI-FI AKTIF\nIP: {d.get('jetson_ip', '')}"
+                    f"WI-FI ACTIVE\nIP: {d.get('jetson_ip', '')}"
                 )
             else:
                 self.pushButton_wifi.setStyleSheet(
                     "background-color: #e74c3c; color: white; "
                     "font-weight: bold; border-radius: 5px;"
                 )
-                self.pushButton_wifi.setText("WI-FI KOPTU\nJetson araniyor")
+                self.pushButton_wifi.setText("WI-FI LOST\nSearching Jetson")
 
         bekliyor = "background-color: #7f8c8d; color: white; font-weight: bold;"
-        arm_aktif = "background-color: #2ecc71; color: white; font-weight: bold;"
-        disarm_red = "background-color: #e74c3c; color: white; font-weight: bold;"
-        pasif = ""
 
         if d.get("arm_change_pending"):
             if d.get("requested_arm_state"):
                 self.pushButton_4.setStyleSheet(bekliyor)
-                self.pushButton_4.setText("ARM BEKLENIYOR...")
-                self.pushButton_8.setStyleSheet(pasif)
-                self.pushButton_8.setText("DISARM")
+                self.pushButton_4.setText("ARM PENDING...")
+                self._disarmed_butonunu_sabitle()
             else:
                 self.pushButton_8.setStyleSheet(bekliyor)
-                self.pushButton_8.setText("DISARM BEKLENIYOR...")
-                self.pushButton_4.setStyleSheet(pasif)
-                self.pushButton_4.setText("ARM")
+                self.pushButton_8.setText("DISARM PENDING...")
+                self._armed_butonunu_sabitle()
         else:
-            if d.get("armed"):
-                self.pushButton_4.setStyleSheet(arm_aktif)
-                self.pushButton_4.setText("ARMED")
-                self.pushButton_8.setStyleSheet(pasif)
-                self.pushButton_8.setText("DISARM")
-            else:
-                self.pushButton_8.setStyleSheet(disarm_red)
-                self.pushButton_8.setText("DISARMED")
-                self.pushButton_4.setStyleSheet(pasif)
-                self.pushButton_4.setText("ARM")
+            self._arm_butonlarini_sabitle()
 
         bekliyor_turuncu = (
             "background-color: #e67e22; color: white; font-weight: bold;"
@@ -243,29 +240,57 @@ class NjordAnaEkran(QMainWindow):
 
         if d.get("mode_change_pending") and d.get("requested_mode") == 10:
             self.pushButton_6.setStyleSheet(bekliyor_turuncu)
-            self.pushButton_6.setText("OTONOM GECISI BEKLENIYOR...")
+            self.pushButton_6.setText("AUTO TRANSITION PENDING...")
         elif d.get("mod_id") == 10:
             self.pushButton_6.setStyleSheet(onaylandi_mavi)
-            self.pushButton_6.setText("OTONOM AKTIF")
+            self.pushButton_6.setText("AUTO ACTIVE")
         else:
-            self.pushButton_6.setStyleSheet(pasif)
-            self.pushButton_6.setText("GOREVI ICRA ET")
+            self.pushButton_6.setStyleSheet("")
+            self.pushButton_6.setText("EXECUTE MISSION")
+
+    def _armed_butonunu_sabitle(self):
+        self.pushButton_4.setStyleSheet(
+            "background-color: #2ecc71; color: white; "
+            "font-weight: bold; border-radius: 10px; "
+            "border: 2px solid #27ae60;"
+        )
+        self.pushButton_4.setText("ARMED")
+
+    def _disarmed_butonunu_sabitle(self):
+        self.pushButton_8.setStyleSheet(
+            "background-color: #e74c3c; color: white; "
+            "font-weight: bold; border-radius: 6px; "
+            "border: 2px solid #c0392b;"
+        )
+        self.pushButton_8.setText("DISARMED")
+
+    def _arm_butonlarini_sabitle(self):
+        self._armed_butonunu_sabitle()
+        self._disarmed_butonunu_sabitle()
 
     def log_ekle(self, m):
-        self.label_3.setText(self.label_2.text())
-        self.label_2.setText(f">> {m}")
-
-        if "!!!" in m or "ERROR" in m or "HATA" in m:
-            self.label_2.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        if "!!!" in m or "ERROR" in m or "FAIL" in m:
+            stil = "color: #e74c3c; font-weight: bold;"
         elif (
             "COMPLETED" in m
             or "SUCCESS" in m
-            or "BASARILI" in m
-            or "ONAYLANDI" in m
+            or "CONFIRMED" in m
         ):
-            self.label_2.setStyleSheet("color: #2ecc71; font-weight: bold;")
+            stil = "color: #2ecc71; font-weight: bold;"
         else:
-            self.label_2.setStyleSheet("color: #3498db; font-weight: bold;")
+            stil = "color: #3498db; font-weight: bold;"
+
+        self._log_gecmisi.insert(0, (f">> {m}", stil))
+        self._log_gecmisi = self._log_gecmisi[: len(self._log_etiketleri)]
+
+        for i, etiket in enumerate(self._log_etiketleri):
+            if i < len(self._log_gecmisi):
+                metin, satir_stili = self._log_gecmisi[i]
+                etiket.setText(metin)
+                etiket.setStyleSheet(satir_stili)
+            else:
+                etiket.setText("")
+                etiket.setStyleSheet("")
 
     def icra(self):
         gorev = "M1"
