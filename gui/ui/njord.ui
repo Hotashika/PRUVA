@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1342</width>
-    <height>703</height>
+    <height>739</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,7 +20,7 @@
       <x>670</x>
       <y>570</y>
       <width>621</width>
-      <height>91</height>
+      <height>141</height>
      </rect>
     </property>
     <property name="title">
@@ -31,12 +31,12 @@
       <rect>
        <x>10</x>
        <y>30</y>
-       <width>201</width>
+       <width>601</width>
        <height>21</height>
       </rect>
      </property>
      <property name="text">
-      <string>CONNECTION  ESTABLISHED</string>
+      <string/>
      </property>
     </widget>
     <widget class="QLabel" name="label_3">
@@ -44,12 +44,38 @@
       <rect>
        <x>10</x>
        <y>60</y>
-       <width>201</width>
+       <width>601</width>
        <height>20</height>
       </rect>
      </property>
      <property name="text">
-      <string>MISSION FILE LOADED</string>
+      <string/>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_9">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>80</y>
+       <width>581</width>
+       <height>20</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_10">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>110</y>
+       <width>601</width>
+       <height>20</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string/>
      </property>
     </widget>
    </widget>
@@ -710,7 +736,7 @@ QComboBox QAbstractItemView {
       <bool>false</bool>
      </property>
      <property name="mode">
-      <enum>Dec</enum>
+      <enum>QLCDNumber::Dec</enum>
      </property>
      <property name="value" stdset="0">
       <double>40.000000000000000</double>
@@ -931,7 +957,7 @@ li.checked::marker { content: &quot;\2612&quot;; }
     <property name="geometry">
      <rect>
       <x>440</x>
-      <y>590</y>
+      <y>630</y>
       <width>151</width>
       <height>51</height>
      </rect>
@@ -947,6 +973,37 @@ li.checked::marker { content: &quot;\2612&quot;; }
     </property>
     <property name="text">
      <string>EMERGENCY STOP</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="pushButton_wifi">
+    <property name="geometry">
+     <rect>
+      <x>440</x>
+      <y>570</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="styleSheet">
+     <string notr="true">QPushButton {
+    background-color: #34495e; /* Koyu Gri/Mavi Tonu */
+    color: white;
+    border-radius: 12px; /* Köşeleri yuvarlar */
+    font-weight: bold;
+    padding: 8px;
+    border: 1px solid #2c3e50;
+}
+
+QPushButton:hover {
+    background-color: #2c3e50; /* Fare üzerine gelince koyulaşır */
+}
+
+QPushButton:pressed {
+    background-color: #1a252f; /* Basıldığında daha da koyulaşır */
+}</string>
+    </property>
+    <property name="text">
+     <string>WIFI CONNECTION</string>
     </property>
    </widget>
   </widget>
