@@ -3,25 +3,19 @@ import time
 
 import cv2
 from PyQt5.QtGui import QImage
-from scapy.layers.l2 import ARP, Ether
-from scapy.sendrecv import srp
 
 JETSON_MAC = "8c:b8:7e:04:20:a9".lower()
 PORT = 5000
 
 
 def get_ip_by_mac(target_mac: str) -> str | None:
-    result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
+    result = subprocess.run(["arp", "-a"], capture_output=True, text=True)
     for line in result.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[2].lower() == target_mac:
-            return parts[0]
-
-    pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst="192.168.1.0/24")
-    answered, _ = srp(pkt, timeout=3, verbose=False)
-    for _, rcv in answered:
-        if rcv[ARP].hwsrc.lower() == target_mac:
-            return rcv[ARP].psrc
+        normalized_line = line.lower().replace("-", ":")
+        if target_mac in normalized_line:
+            for part in line.split():
+                if part.count(".") == 3:
+                    return part
 
     return None
 
@@ -61,7 +55,7 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
             ret, frame = cap.read()
             if not ret:
                 if log_callback:
-                    log_callback("Frame alınamadı, yeniden bağlanılıyor...")
+                    log_callback("Frame was not received, reconnecting...")
                 cap.release()
                 cap = cv2.VideoCapture(url)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -93,7 +87,7 @@ def start(jetson_ip: str | None = None, frame_callback=None, log_callback=None, 
     while ip is None:
         if stop_callback is not None and not stop_callback():
             return
-        message = "Jetson IP bulunamadı, tekrar deneniyor..."
+        message = "Jetson IP was not found, retrying..."
         if log_callback:
             log_callback(message)
         else:
@@ -102,7 +96,7 @@ def start(jetson_ip: str | None = None, frame_callback=None, log_callback=None, 
         ip = jetson_ip or get_ip_by_mac(JETSON_MAC)
 
     if ip is None:
-        message = "Jetson bulunamadı, aynı ağda mısın?"
+        message = "Jetson was not found. Check that it is on the same network."
         if log_callback:
             log_callback(message)
         else:
