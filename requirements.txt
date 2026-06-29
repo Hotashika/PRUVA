@@ -10,8 +10,6 @@ wsproto
 opencv-python
 numpy
 pyzed
-scapy
 pyqt5
 pymavlink
 flask
-netifaces

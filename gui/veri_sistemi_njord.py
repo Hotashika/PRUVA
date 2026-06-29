@@ -15,6 +15,11 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QImage
 from pymavlink import mavutil
 
+try:
+    from gui.backend_client_njord import BackendClient, BackendClientError
+except ImportError:
+    from backend_client_njord import BackendClient, BackendClientError
+
 
 ARDUROVER_MODS = {
     0: "MANUAL",
@@ -33,6 +38,7 @@ ARDUROVER_MODS = {
     15: "GUIDED",
     16: "INITIALISING",
 }
+MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 5.0
 
@@ -90,6 +96,7 @@ class NjordVeriSistemi(QObject):
     log_sinyali = pyqtSignal(str)
     kamera_sinyali = pyqtSignal(QImage)
     baglanti_kesildi = pyqtSignal()
+    waypoint_guncelle = pyqtSignal(list)
 
     def __init__(self):
         super().__init__()
@@ -105,6 +112,9 @@ class NjordVeriSistemi(QObject):
         self._last_network_scan = 0.0
         self._last_logged_jetson_ip = None
         self._last_video_wait_log = 0.0
+        self.backend_client = BackendClient()
+        self._backend_mission_id = None
+        self._mission_waypoints = []
 
         self._durum = {
             "baglanti": False,
@@ -146,6 +156,39 @@ class NjordVeriSistemi(QObject):
     def _snapshot(self):
         with self._lock:
             return copy.deepcopy(self._durum)
+
+    def gorev_noktalarini_al(self):
+        with self._lock:
+            return copy.deepcopy(self._mission_waypoints)
+
+    def gorev_noktalarini_guncelle(self, waypoints):
+        normalized = []
+        for index, item in enumerate(waypoints, start=1):
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("id") or item.get("label") or f"WP_{index:02d}"
+                lat = item.get("lat", item.get("latitude"))
+                lon = item.get("lon", item.get("lng", item.get("longitude")))
+            elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                name, lat, lon = item[0], item[1], item[2]
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                name, lat, lon = f"WP_{index:02d}", item[0], item[1]
+            else:
+                continue
+
+            try:
+                normalized.append(
+                    {
+                        "name": str(name),
+                        "lat": float(lat),
+                        "lon": float(lon),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+
+        with self._lock:
+            self._mission_waypoints = normalized
+        self.waypoint_guncelle.emit(copy.deepcopy(normalized))
 
     def _emit_durum(self):
         with self._lock:
@@ -604,6 +647,13 @@ class NjordVeriSistemi(QObject):
         return True
 
     def arm_yap(self):
+        try:
+            response = self._backend_arm_ayarla(True)
+            self._handle_backend_command_response(response, "ARM command")
+        except BackendClientError as exc:
+            self._log(f"ERROR: ARM command failed: {exc}")
+
+    def _arm_yap_mavlink_fallback(self):
         with self._lock:
             if self._durum["mod"] == "EMERGENCY":
                 self._log("ERROR: Reset emergency state before arming.")
@@ -621,6 +671,13 @@ class NjordVeriSistemi(QObject):
             self._log("ARM command sent -> waiting for heartbeat confirmation")
 
     def disarm_yap(self):
+        try:
+            response = self._backend_arm_ayarla(False)
+            self._handle_backend_command_response(response, "DISARM command")
+        except BackendClientError as exc:
+            self._log(f"ERROR: DISARM command failed: {exc}")
+
+    def _disarm_yap_mavlink_fallback(self):
         if self._komut_gonder(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0):
             self._set(
                 requested_arm_state=False,
@@ -631,6 +688,26 @@ class NjordVeriSistemi(QObject):
             self._log("DISARM command sent -> waiting for heartbeat confirmation")
 
     def mod_ayarla(self, mod_id):
+        mod_name = ARDUROVER_MODS.get(mod_id, f"MODE_{mod_id}")
+        try:
+            response = self._backend_mod_ayarla(mod_name)
+            self._handle_backend_command_response(response, f"MODE {mod_name} command")
+            self._set(
+                requested_mode=mod_id,
+                mode_change_pending=True,
+                decision_log=f"MODE CHANGE REQUESTED: {mod_name}",
+            )
+        except BackendClientError as exc:
+            self._log(f"ERROR: MODE {mod_name} command failed: {exc}")
+
+    def mod_ayarla_ad(self, mod_name):
+        mode_id = MODE_NAME_TO_ID.get(str(mod_name).upper())
+        if mode_id is None:
+            self._log(f"ERROR: Unknown mode selected: {mod_name}")
+            return
+        self.mod_ayarla(mode_id)
+
+    def _mod_ayarla_mavlink_fallback(self, mod_id):
         mod_name = ARDUROVER_MODS.get(mod_id, f"MODE_{mod_id}")
         if not self.connection:
             self._log("ERROR: No connection for mode change.")
@@ -648,7 +725,57 @@ class NjordVeriSistemi(QObject):
         )
         self._log(f"MODE command sent: {mod_name} ({mod_id})")
 
+    def _backend_arm_ayarla(self, armed):
+        jetson_ip = self._require_backend_ip()
+        self._log(f"Sending backend ARM command: {armed}")
+        return self.backend_client.set_arm(armed, jetson_ip=jetson_ip)
+
+    def _backend_mod_ayarla(self, mode):
+        jetson_ip = self._require_backend_ip()
+        self._log(f"Sending backend MODE command: {mode}")
+        return self.backend_client.set_mode(mode, jetson_ip=jetson_ip)
+
+    def _backend_acil_durum(self):
+        jetson_ip = self._require_backend_ip()
+        self._log("Sending backend EMERGENCY STOP command")
+        return self.backend_client.emergency_stop(jetson_ip=jetson_ip)
+
+    def _require_backend_ip(self):
+        with self._lock:
+            jetson_ip = self._durum.get("jetson_ip")
+            wifi_aktif = self._durum.get("wifi_aktif")
+
+        if not wifi_aktif or not self._valid_ip(jetson_ip):
+            raise BackendClientError("Jetson IP is not ready. Wait for Wi-Fi/Jetson connection first.")
+        return jetson_ip
+
+    def _handle_backend_command_response(self, response, label):
+        ok = bool(response.get("ok", response.get("success", False)))
+        message = response.get("message") or response.get("detail") or f"{label} completed."
+        if ok:
+            self._log(f"SUCCESS: {message}")
+        else:
+            self._log(f"ERROR: {message}")
+
     def gorev_baslat(self, gorev_adi):
+        try:
+            response = self.gorev_backend_baslat(gorev_adi)
+        except BackendClientError as exc:
+            self._log(f"ERROR: Mission start failed: {exc}")
+            return
+
+        ok = bool(response.get("ok", response.get("success", False)))
+        message = response.get("message") or response.get("detail") or "Mission start request completed."
+        if ok:
+            self._set(
+                active_mission=gorev_adi,
+                decision_log=f"MISSION STARTED BY BACKEND: {gorev_adi}",
+            )
+            self._log(f"SUCCESS: {message}")
+        else:
+            self._log(f"ERROR: {message}")
+
+    def _gorev_baslat_mavlink_fallback(self, gorev_adi):
         with self._lock:
             armed = self._durum["armed"]
 
@@ -666,8 +793,50 @@ class NjordVeriSistemi(QObject):
         )
         self._log(f"MISSION STARTED: {gorev_adi}")
 
+    def gorev_txt_yukle(self, txt_yolu, mission_name=None):
+        jetson_ip = self._require_backend_ip()
+
+        self._log(f"Uploading mission TXT to backend: {txt_yolu}")
+        response = self.backend_client.upload_mission_txt(
+            txt_yolu,
+            jetson_ip=jetson_ip,
+            mission_name=mission_name,
+        )
+
+        ok = bool(response.get("ok", response.get("success", False)))
+        message = response.get("message") or response.get("detail") or "Mission TXT upload completed."
+        if ok:
+            self._backend_mission_id = (
+                response.get("mission_id")
+                or response.get("id")
+                or response.get("mission", {}).get("id")
+            )
+            self._log(f"SUCCESS: {message}")
+        else:
+            self._log(f"ERROR: {message}")
+
+        return response
+
+    def gorev_backend_baslat(self, gorev_adi):
+        jetson_ip = self._require_backend_ip()
+
+        self._log(f"Starting mission through backend: {gorev_adi}")
+        return self.backend_client.start_mission(
+            gorev_adi,
+            mission_id=self._backend_mission_id,
+            jetson_ip=jetson_ip,
+        )
+
     def acil_durum(self):
-        self.disarm_yap()
+        try:
+            response = self._backend_acil_durum()
+            self._handle_backend_command_response(response, "EMERGENCY STOP")
+            self._set(mod="EMERGENCY", decision_log="!!! EMERGENCY STOP REQUESTED !!!")
+        except BackendClientError as exc:
+            self._log(f"ERROR: EMERGENCY STOP failed: {exc}")
+
+    def _acil_durum_mavlink_fallback(self):
+        self._disarm_yap_mavlink_fallback()
         self._set(mod="EMERGENCY", decision_log="!!! EMERGENCY STOP ACTIVE !!!")
         self._log("!!! EMERGENCY STOP !!!")
 

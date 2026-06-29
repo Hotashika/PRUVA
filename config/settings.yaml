@@ -1,0 +1,20 @@
+backend:
+  # "auto" means: use the Jetson IP discovered by the Wi-Fi/MAC scanner.
+  host: auto
+  protocol: http
+  http_port: 8000
+  tcp_port: 9000
+  mission_upload_path: /api/mission/upload_txt
+  mission_start_path: /api/mission/start
+  pixhawk_arm_path: /api/pixhawk/arm
+  pixhawk_mode_path: /api/pixhawk/set_mode
+  emergency_stop_path: /api/mission/stop
+  timeout_s: 5
+
+mission:
+  default_name: UPLOADED_TXT
+  upload_to_pixhawk: true
+
+camera:
+  video_port: 5000
+  video_path: /video_feed
