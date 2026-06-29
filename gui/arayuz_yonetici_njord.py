@@ -354,8 +354,10 @@ class GorevPlaniEkrani(QDialog):
 class NjordAnaEkran(QMainWindow):
     def __init__(self):
         super().__init__()
-        uic.loadUi(os.path.join(UI_KLASOR, "njord.ui"), self)
-        self.setFixedSize(self.size())
+        uic.loadUi(os.path.join(UI_KLASOR, "njord_new.ui"), self)
+        self._yeni_ui_adlarini_esle()
+        self._yeni_ui_layout_duzelt()
+        self.setMinimumSize(900, 600)
 
         self.sistem = NjordVeriSistemi()
         self.harita_pencere = None
@@ -399,6 +401,108 @@ class NjordAnaEkran(QMainWindow):
         self._arm_butonlarini_sabitle()
         self._camera_auto_started = False
         self._ui_hazir = True
+        QtCore.QTimer.singleShot(0, self.showMaximized)
+
+    def _yeni_ui_adlarini_esle(self):
+        eslemeler = {
+            "pushButton": "BTNCONNECT",
+            "pushButton_2": "BTNFILE",
+            "pushButton_3": "BTNMAP",
+            "pushButton_4": "BTNARM",
+            "pushButton_5": "BTNROLL",
+            "pushButton_6": "BTNMISSION",
+            "pushButton_7": "BTNSTOP",
+            "pushButton_8": "BTNDISARM",
+            "pushButton_9": "BTNPITCH",
+            "pushButton_10": "BTNYAW",
+            "pushButton_11": "BTNLAT",
+            "pushButton_12": "BTNLONG",
+            "pushButton_wifi": "BTNWIFI",
+            "comboBox_2": "CMBMODE",
+            "radioButton": "RM1",
+            "radioButton_2": "RM2",
+            "radioButton_3": "RM3",
+            "radioButton_4": "RM4",
+            "label_7": "LCAMERA",
+            "textEdit": "TXTCOLREG",
+            "progressBar": "BATTERBAR",
+            "lcdNumber": "LCDCURRENT",
+            "lcdNumber_2": "LCDVOLT",
+            "lcdNumber_3": "LCDSPEED",
+            "label": "LC1",
+            "label_13": "LC2",
+            "label_14": "LC3",
+            "label_15": "LC4",
+            "label_16": "LC5",
+            "label_17": "LC6",
+            "label_2": "LLOG1",
+            "label_3": "LLOG2",
+            "label_9": "LLOG3",
+            "label_10": "LLOG4",
+            "label_8": "LLOGIC",
+        }
+        for eski_ad, yeni_ad in eslemeler.items():
+            if hasattr(self, yeni_ad):
+                setattr(self, eski_ad, getattr(self, yeni_ad))
+
+    def _yeni_ui_layout_duzelt(self):
+        if hasattr(self, "leftPanel") and hasattr(self, "middlePanel") and hasattr(self, "rightPanel"):
+            panel_layout = getattr(self, "horizontalLayout", None)
+            if panel_layout is not None:
+                panel_layout.setStretch(0, 12)
+                panel_layout.setStretch(1, 12)
+                panel_layout.setStretch(2, 26)
+                panel_layout.setStretchFactor(self.leftPanel, 12)
+                panel_layout.setStretchFactor(self.middlePanel, 12)
+                panel_layout.setStretchFactor(self.rightPanel, 26)
+
+            self.leftPanel.setMinimumWidth(300)
+            self.middlePanel.setMinimumWidth(240)
+            self.rightPanel.setMinimumWidth(340)
+            for panel in (self.leftPanel, self.middlePanel, self.rightPanel):
+                panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        if hasattr(self, "groupBox_4") and hasattr(self, "LCAMERA") and hasattr(self, "groupBox_8"):
+            right_layout = getattr(self, "rightPanel", None)
+            if right_layout is not None and self.rightPanel.layout() is not None and hasattr(self, "groupBox_5"):
+                self.rightPanel.layout().setStretchFactor(self.groupBox_4, 4)
+                self.rightPanel.layout().setStretchFactor(self.groupBox_5, 1)
+
+            layout = self.groupBox_4.layout()
+            if layout is None:
+                layout = QtWidgets.QVBoxLayout(self.groupBox_4)
+                layout.setContentsMargins(10, 24, 10, 10)
+                layout.setSpacing(10)
+                layout.addWidget(self.LCAMERA, 5)
+                layout.addWidget(self.groupBox_8, 3)
+            else:
+                layout.setStretchFactor(self.LCAMERA, 5)
+                layout.setStretchFactor(self.groupBox_8, 3)
+
+            self.LCAMERA.setMinimumSize(320, 180)
+            self.LCAMERA.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            self.groupBox_8.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        if hasattr(self, "groupBox_8") and hasattr(self, "LLOGIC") and hasattr(self, "TXTCOLREG"):
+            decision_layout = self.groupBox_8.layout()
+            if decision_layout is None:
+                decision_layout = QtWidgets.QGridLayout(self.groupBox_8)
+                decision_layout.setContentsMargins(10, 24, 10, 10)
+                decision_layout.setSpacing(10)
+                decision_layout.addWidget(self.LLOGIC, 0, 0, 2, 1)
+                if hasattr(self, "label_12"):
+                    decision_layout.addWidget(self.label_12, 0, 1)
+                decision_layout.addWidget(self.TXTCOLREG, 1, 1)
+                decision_layout.setColumnStretch(0, 1)
+                decision_layout.setColumnStretch(1, 1)
+                decision_layout.setRowStretch(1, 1)
+
+            self.LLOGIC.setMinimumSize(160, 110)
+            self.LLOGIC.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            self.TXTCOLREG.setMinimumSize(180, 110)
+            self.TXTCOLREG.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            if hasattr(self, "label_12"):
+                self.label_12.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -462,11 +566,18 @@ class NjordAnaEkran(QMainWindow):
         ]
         for index, etiket in enumerate(self._cell_etiketleri, start=1):
             etiket.setText(f"CELL {index}: 0.00 V")
+            etiket.setStyleSheet("font-size: 12pt; font-weight: bold; color: #0b2239;")
+
+        for etiket in (self.label_18, self.label_20):
+            etiket.setStyleSheet("font-size: 11pt; font-weight: bold; color: #0b2239;")
 
         self.textEdit.setPlainText(
             "Distance to next WP: 0.0 m\n"
+            "\n"
             "COLREG rule: --\n"
+            "\n"
             "Decision: --\n"
+            "\n"
             "Reason: --"
         )
 
@@ -490,8 +601,102 @@ class NjordAnaEkran(QMainWindow):
             "QComboBox QAbstractItemView { background-color: #1a1a1a; color: #ecf0f1; "
             "selection-background-color: #3498db; selection-color: white; outline: none; }"
         )
+        self._veri_gostergesi_stili = (
+            "QPushButton { background-color: #f8fcff; color: #0b2239; "
+            "border: 2px solid #00a8e8; border-radius: 6px; "
+            "font-weight: bold; padding: 5px; }"
+        )
+        self._lcd_stili = (
+            "QLCDNumber { color: #00D2FF; border: 2px solid #00a8e8; "
+            "border-radius: 5px; background-color: #f8fcff; }"
+        )
+        self._batarya_stili = (
+            "QProgressBar { border: 1px solid #7fb3d5; border-radius: 4px; "
+            "background-color: #eef6fb; text-align: center; font-weight: bold; }"
+            "QProgressBar::chunk { background-color: #3498db; border-radius: 3px; }"
+        )
+        self._acil_stop_stili = (
+            "QPushButton { background-color: #c0392b; color: white; "
+            "border-radius: 10px; font-weight: bold; padding: 8px; "
+            "border: 2px solid #922b21; }"
+            "QPushButton:hover { background-color: #e74c3c; }"
+            "QPushButton:pressed { background-color: #922b21; }"
+        )
+
+        for buton in (
+            self.pushButton,
+            self.pushButton_2,
+            self.pushButton_3,
+            self.pushButton_6,
+        ):
+            buton.setStyleSheet(self._komut_buton_stili)
+
+        for buton in (
+            self.pushButton_5,
+            self.pushButton_9,
+            self.pushButton_10,
+            self.pushButton_11,
+            self.pushButton_12,
+        ):
+            buton.setStyleSheet(self._veri_gostergesi_stili)
+
+        for lcd in (self.lcdNumber, self.lcdNumber_2, self.lcdNumber_3):
+            lcd.setStyleSheet(self._lcd_stili)
+
+        for buton in (self.pushButton, self.pushButton_2, self.pushButton_3):
+            buton.setMinimumHeight(48)
+            buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        self.textEdit.setStyleSheet(
+            "QTextEdit { font-size: 13pt; font-weight: bold; color: #0b2239; "
+            "background-color: #ffffff; border: 1px solid #7fb3d5; }"
+        )
+
+        for etiket in self._log_etiketleri:
+            etiket.setMinimumHeight(28)
+            etiket.setStyleSheet("font-size: 12pt; font-weight: bold; color: #1f618d;")
+
+        self.progressBar.setStyleSheet(self._batarya_stili)
+        self.pushButton_7.setStyleSheet(self._acil_stop_stili)
         self.pushButton_6.setStyleSheet(self._komut_buton_stili)
         self.comboBox_2.setStyleSheet(self._mode_combo_stili)
+
+        if hasattr(self, "groupBox_7"):
+            self.groupBox_7.setMaximumHeight(175)
+            self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+
+        radio_stili = (
+            "QRadioButton { font-size: 12pt; font-weight: bold; color: #0b2239; "
+            "spacing: 10px; padding: 6px; }"
+            "QRadioButton::indicator { width: 20px; height: 20px; }"
+            "QRadioButton::indicator:unchecked { border: 2px solid #5dade2; "
+            "border-radius: 10px; background-color: #ffffff; }"
+            "QRadioButton::indicator:checked { border: 2px solid #1f618d; "
+            "border-radius: 10px; background-color: #3498db; }"
+        )
+        for radio in (self.radioButton, self.radioButton_2, self.radioButton_3, self.radioButton_4):
+            radio.setMinimumHeight(36)
+            radio.setStyleSheet(radio_stili)
+            radio.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        if hasattr(self, "groupBox_6"):
+            self.groupBox_6.setMaximumHeight(380)
+            self.groupBox_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+
+        if hasattr(self, "middlePanel") and self.middlePanel.layout() is not None:
+            orta_layout = self.middlePanel.layout()
+            if hasattr(self, "pushButton_3"):
+                orta_layout.setStretchFactor(self.pushButton_3, 0)
+            if hasattr(self, "groupBox_6"):
+                orta_layout.setStretchFactor(self.groupBox_6, 0)
+            if hasattr(self, "pushButton_wifi"):
+                orta_layout.setStretchFactor(self.pushButton_wifi, 0)
+            if hasattr(self, "pushButton_7"):
+                orta_layout.setStretchFactor(self.pushButton_7, 0)
+
+        for buton in (self.pushButton_6, self.pushButton_wifi, self.pushButton_7):
+            buton.setMinimumHeight(58)
+            buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def _decision_metni(self, d):
         mesafe = d.get("distance_to_next_wp", d.get("mesafe", 0.0))
@@ -500,8 +705,11 @@ class NjordAnaEkran(QMainWindow):
         reason = d.get("decision_reason", d.get("colreg_reason", "--"))
         return (
             f"Distance to next WP: {float(mesafe or 0.0):.1f} m\n"
+            "\n"
             f"COLREG rule: {colreg or '--'}\n"
+            "\n"
             f"Decision: {decision or '--'}\n"
+            "\n"
             f"Reason: {reason or '--'}"
         )
 
@@ -604,18 +812,20 @@ class NjordAnaEkran(QMainWindow):
             self.comboBox_2.setStyleSheet(self._mode_combo_stili)
 
     def _armed_butonunu_sabitle(self):
+        self.pushButton_4.setMinimumSize(180, 44)
         self.pushButton_4.setStyleSheet(
             "background-color: #2ecc71; color: white; "
             "font-weight: bold; border-radius: 10px; "
-            "border: 2px solid #27ae60;"
+            "border: 2px solid #27ae60; padding: 8px 18px;"
         )
         self.pushButton_4.setText("ARMED")
 
     def _disarmed_butonunu_sabitle(self):
+        self.pushButton_8.setMinimumSize(180, 44)
         self.pushButton_8.setStyleSheet(
             "background-color: #e74c3c; color: white; "
             "font-weight: bold; border-radius: 6px; "
-            "border: 2px solid #c0392b;"
+            "border: 2px solid #c0392b; padding: 8px 18px;"
         )
         self.pushButton_8.setText("DISARMED")
 
@@ -624,16 +834,17 @@ class NjordAnaEkran(QMainWindow):
         self._disarmed_butonunu_sabitle()
 
     def log_ekle(self, m):
+        temel_log_stili = "font-size: 12pt; font-weight: bold;"
         if "!!!" in m or "ERROR" in m or "FAIL" in m:
-            stil = "color: #e74c3c; font-weight: bold;"
+            stil = temel_log_stili + " color: #e74c3c;"
         elif (
             "COMPLETED" in m
             or "SUCCESS" in m
             or "CONFIRMED" in m
         ):
-            stil = "color: #2ecc71; font-weight: bold;"
+            stil = temel_log_stili + " color: #2ecc71;"
         else:
-            stil = "color: #3498db; font-weight: bold;"
+            stil = temel_log_stili + " color: #3498db;"
 
         self._log_gecmisi.insert(0, (f">> {m}", stil))
         self._log_gecmisi = self._log_gecmisi[: len(self._log_etiketleri)]

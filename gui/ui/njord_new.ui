@@ -30,31 +30,31 @@
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_2">
             <item>
-             <widget class="QPushButton" name="pushButton">
+             <widget class="QPushButton" name="BTNCONNECT">
               <property name="text">
                <string>CONNECT</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="pushButton_8">
+             <widget class="QPushButton" name="BTNDISARM">
               <property name="text">
                <string>DISARMED</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="pushButton_4">
+             <widget class="QPushButton" name="BTNARM">
               <property name="text">
                <string>ARMED</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="comboBox_2">
+             <widget class="QComboBox" name="CMBMODE">
               <item>
                <property name="text">
-                <string>MANUEL</string>
+                <string>MANUAL</string>
                </property>
               </item>
               <item>
@@ -89,7 +89,7 @@
            </property>
            <layout class="QGridLayout" name="gridLayout">
             <item row="0" column="0">
-             <widget class="QPushButton" name="pushButton_9">
+             <widget class="QPushButton" name="BTNROLL">
               <property name="text">
                <string>ROLL :0.0</string>
               </property>
@@ -103,14 +103,14 @@
              </widget>
             </item>
             <item row="0" column="2">
-             <widget class="QPushButton" name="pushButton_12">
+             <widget class="QPushButton" name="BTNLAT">
               <property name="text">
                <string>0.0</string>
               </property>
              </widget>
             </item>
             <item row="1" column="0">
-             <widget class="QPushButton" name="pushButton_10">
+             <widget class="QPushButton" name="BTNPITCH">
               <property name="text">
                <string>PITCH:0.0</string>
               </property>
@@ -124,14 +124,14 @@
              </widget>
             </item>
             <item row="1" column="2">
-             <widget class="QPushButton" name="pushButton_13">
+             <widget class="QPushButton" name="BTNLONG">
               <property name="text">
                <string>0.0</string>
               </property>
              </widget>
             </item>
             <item row="2" column="0">
-             <widget class="QPushButton" name="pushButton_11">
+             <widget class="QPushButton" name="BTNYAW">
               <property name="text">
                <string>YAW:0.0</string>
               </property>
@@ -145,7 +145,7 @@
              </widget>
             </item>
             <item row="2" column="2">
-             <widget class="QLCDNumber" name="lcdNumber_3"/>
+             <widget class="QLCDNumber" name="LCDSPEED"/>
             </item>
            </layout>
           </widget>
@@ -157,51 +157,51 @@
            </property>
            <layout class="QGridLayout" name="gridLayout_2">
             <item row="0" column="0" colspan="2">
-             <widget class="QProgressBar" name="progressBar">
+             <widget class="QProgressBar" name="BATTERBAR">
               <property name="value">
-               <number>24</number>
+               <number>0</number>
               </property>
              </widget>
             </item>
             <item row="1" column="0">
-             <widget class="QLabel" name="label_4">
+             <widget class="QLabel" name="LC1">
               <property name="text">
-               <string>CELL 1</string>
+               <string>CELL 1 : 0.0  V</string>
               </property>
              </widget>
             </item>
             <item row="1" column="1">
-             <widget class="QLabel" name="label_15">
+             <widget class="QLabel" name="LC4">
               <property name="text">
-               <string>CELL 4</string>
+               <string>CELL 4 : 0.0 V</string>
               </property>
              </widget>
             </item>
             <item row="2" column="0">
-             <widget class="QLabel" name="label_13">
+             <widget class="QLabel" name="LC2">
               <property name="text">
-               <string>CELL 2</string>
+               <string>CELL 2 : 0.0 V</string>
               </property>
              </widget>
             </item>
             <item row="2" column="1">
-             <widget class="QLabel" name="label_16">
+             <widget class="QLabel" name="LC5">
               <property name="text">
-               <string>CELL 5</string>
+               <string>CELL 5 : 0.0 V</string>
               </property>
              </widget>
             </item>
             <item row="3" column="0">
-             <widget class="QLabel" name="label_14">
+             <widget class="QLabel" name="LC3">
               <property name="text">
-               <string>CELL 3</string>
+               <string>CELL 3 : 0.0 V</string>
               </property>
              </widget>
             </item>
             <item row="3" column="1">
-             <widget class="QLabel" name="label_17">
+             <widget class="QLabel" name="LC6">
               <property name="text">
-               <string>CELL 6</string>
+               <string>CELL 6 : 0.0 V</string>
               </property>
              </widget>
             </item>
@@ -220,10 +220,10 @@
              </widget>
             </item>
             <item row="5" column="0">
-             <widget class="QLCDNumber" name="lcdNumber"/>
+             <widget class="QLCDNumber" name="LCDCURRENT"/>
             </item>
             <item row="5" column="1">
-             <widget class="QLCDNumber" name="lcdNumber_2"/>
+             <widget class="QLCDNumber" name="LCDVOLT"/>
             </item>
            </layout>
           </widget>
@@ -235,7 +235,7 @@
        <widget class="QWidget" name="middlePanel" native="true">
         <layout class="QVBoxLayout" name="verticalLayout_3">
          <item>
-          <widget class="QPushButton" name="pushButton_6">
+          <widget class="QPushButton" name="BTNMAP">
            <property name="text">
             <string>SHOW MAP</string>
            </property>
@@ -248,7 +248,7 @@
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_5">
             <item>
-             <widget class="QPushButton" name="pushButton_2">
+             <widget class="QPushButton" name="BTNFILE">
               <property name="text">
                <string>LOAD MISSION FILE</string>
               </property>
@@ -261,28 +261,28 @@
               </property>
               <layout class="QVBoxLayout" name="verticalLayout_4">
                <item>
-                <widget class="QRadioButton" name="radioButton">
+                <widget class="QRadioButton" name="RM1">
                  <property name="text">
                   <string>M1</string>
                  </property>
                 </widget>
                </item>
                <item>
-                <widget class="QRadioButton" name="radioButton_2">
+                <widget class="QRadioButton" name="RM2">
                  <property name="text">
                   <string>M2</string>
                  </property>
                 </widget>
                </item>
                <item>
-                <widget class="QRadioButton" name="radioButton_3">
+                <widget class="QRadioButton" name="RM3">
                  <property name="text">
                   <string>M3</string>
                  </property>
                 </widget>
                </item>
                <item>
-                <widget class="QRadioButton" name="radioButton_4">
+                <widget class="QRadioButton" name="RM4">
                  <property name="text">
                   <string>M4</string>
                  </property>
@@ -292,7 +292,7 @@
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="pushButton_14">
+             <widget class="QPushButton" name="BTNMISSION">
               <property name="text">
                <string>EXECUTE MISSION</string>
               </property>
@@ -302,14 +302,14 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_wifi">
+          <widget class="QPushButton" name="BTNWIFI">
            <property name="text">
             <string>WIFI CONNECTION</string>
            </property>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_7">
+          <widget class="QPushButton" name="BTNSTOP">
            <property name="text">
             <string>EMERGENCY STOP</string>
            </property>
@@ -326,9 +326,9 @@
            <property name="title">
             <string>CAMERA</string>
            </property>
-           <widget class="QLabel" name="label_7">
+           <widget class="QLabel" name="LCAMERA">
             <property name="enabled">
-             <bool>false</bool>
+             <bool>true</bool>
             </property>
             <property name="geometry">
              <rect>
@@ -366,7 +366,7 @@
             <property name="title">
              <string>DECISION LOGIC</string>
             </property>
-            <widget class="QLabel" name="label_8">
+            <widget class="QLabel" name="LLOGIC">
              <property name="geometry">
               <rect>
                <x>40</x>
@@ -392,7 +392,7 @@
               <string>COLREG</string>
              </property>
             </widget>
-            <widget class="QTextEdit" name="textEdit">
+            <widget class="QTextEdit" name="TXTCOLREG">
              <property name="geometry">
               <rect>
                <x>240</x>
@@ -415,28 +415,28 @@
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_7">
             <item>
-             <widget class="QLabel" name="label_5">
+             <widget class="QLabel" name="LLOG1">
               <property name="text">
                <string>TextLabel</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QLabel" name="label_6">
+             <widget class="QLabel" name="LLOG2">
               <property name="text">
                <string>TextLabel</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QLabel" name="label_9">
+             <widget class="QLabel" name="LLOG3">
               <property name="text">
                <string>TextLabel</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QLabel" name="label_10">
+             <widget class="QLabel" name="LLOG4">
               <property name="text">
                <string>TextLabel</string>
               </property>
