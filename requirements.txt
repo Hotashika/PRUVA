@@ -12,4 +12,5 @@ numpy
 pyzed
 pyqt5
 pymavlink
+pyserial
 flask
