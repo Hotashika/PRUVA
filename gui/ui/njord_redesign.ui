@@ -1,0 +1,664 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1440</width>
+    <height>900</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1280</width>
+    <height>720</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>NJORD ASV Ground Control</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout_main">
+    <property name="spacing">
+     <number>10</number>
+    </property>
+    <property name="leftMargin">
+     <number>10</number>
+    </property>
+    <property name="topMargin">
+     <number>10</number>
+    </property>
+    <property name="rightMargin">
+     <number>10</number>
+    </property>
+    <property name="bottomMargin">
+     <number>10</number>
+    </property>
+    <item>
+     <widget class="QWidget" name="topVisualPanel" native="true">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>360</height>
+       </size>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_visual">
+       <property name="spacing">
+        <number>10</number>
+       </property>
+       <item>
+        <widget class="QGroupBox" name="groupBox_4">
+         <property name="title">
+          <string>CAMERA</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_camera">
+          <item>
+           <widget class="QLabel" name="LCAMERA">
+            <property name="minimumSize">
+             <size>
+              <width>420</width>
+              <height>330</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>NO CAMERA SIGNAL</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBox_mapMain">
+         <property name="title">
+          <string>MAP</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_map">
+          <item>
+           <widget class="QLabel" name="LMAINMAP">
+            <property name="minimumSize">
+             <size>
+              <width>420</width>
+              <height>300</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Waiting for GPS and mission waypoints</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout_map_status">
+            <item>
+             <widget class="QLabel" name="LMAPGPS">
+              <property name="minimumSize">
+               <size>
+                <width>110</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>GPS: 0</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="LMAPSATS">
+              <property name="minimumSize">
+               <size>
+                <width>110</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>SATS: 0</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="LMAPDIST">
+              <property name="minimumSize">
+               <size>
+                <width>210</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>NEXT WP: 0.0 m</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QWidget" name="bottomInfoPanel" native="true">
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <property name="spacing">
+        <number>10</number>
+       </property>
+       <item>
+        <widget class="QWidget" name="leftPanel" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>360</width>
+           <height>0</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_left">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QGroupBox" name="groupBox">
+            <property name="title">
+             <string>SYSTEM STATUS</string>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_system">
+             <item>
+              <widget class="QPushButton" name="BTNCONNECT">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>40</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>CONNECT</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="LVESSELSTATUS">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>36</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>STANDBY - Waiting for Mission</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_arm">
+               <item>
+                <widget class="QPushButton" name="BTNARM">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>38</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>ARMED</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="BTNDISARM">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>38</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>DISARMED</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QComboBox" name="CMBMODE">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>38</height>
+                </size>
+               </property>
+               <item>
+                <property name="text">
+                 <string>MANUAL</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>HOLD</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>AUTO</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>GUIDED</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>RTL</string>
+                </property>
+               </item>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="groupBox_2">
+            <property name="title">
+             <string>IMU / TELEMETRY</string>
+            </property>
+            <layout class="QGridLayout" name="gridLayout_telemetry">
+             <item row="0" column="0">
+              <widget class="QPushButton" name="BTNROLL">
+               <property name="text">
+                <string>ROLL: 0.0°</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLabel" name="label_lat_title">
+               <property name="text">
+                <string>LATITUDE</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="2">
+              <widget class="QPushButton" name="BTNLAT">
+               <property name="text">
+                <string>0.0</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QPushButton" name="BTNPITCH">
+               <property name="text">
+                <string>PITCH: 0.0°</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLabel" name="label_lon_title">
+               <property name="text">
+                <string>LONGITUDE</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="2">
+              <widget class="QPushButton" name="BTNLONG">
+               <property name="text">
+                <string>0.0</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QPushButton" name="BTNYAW">
+               <property name="text">
+                <string>YAW: 0.0°</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QLabel" name="label_speed_title">
+               <property name="text">
+                <string>SPEED</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="2">
+              <widget class="QLCDNumber" name="LCDSPEED"/>
+             </item>
+             <item row="3" column="1">
+              <widget class="QLabel" name="LCOG">
+               <property name="minimumSize">
+                <size>
+                 <width>100</width>
+                 <height>28</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>130</width>
+                 <height>34</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>COG: 0.0°</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="middlePanel" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>360</width>
+           <height>0</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_middle">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QGroupBox" name="groupBox_3">
+            <property name="title">
+             <string>BATTERY STATUS</string>
+            </property>
+            <layout class="QGridLayout" name="gridLayout_battery">
+             <item row="0" column="0" colspan="2">
+              <widget class="QProgressBar" name="BATTERBAR">
+               <property name="value">
+                <number>0</number>
+               </property>
+               <property name="textVisible">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="LC1">
+               <property name="text">
+                <string>CELL 1: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLabel" name="LC4">
+               <property name="text">
+                <string>CELL 4: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="LC2">
+               <property name="text">
+                <string>CELL 2: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QLabel" name="LC5">
+               <property name="text">
+                <string>CELL 5: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0">
+              <widget class="QLabel" name="LC3">
+               <property name="text">
+                <string>CELL 3: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="1">
+              <widget class="QLabel" name="LC6">
+               <property name="text">
+                <string>CELL 6: 0.00 V</string>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="0">
+              <widget class="QLabel" name="label_18">
+               <property name="text">
+                <string>TOTAL CURRENT</string>
+               </property>
+              </widget>
+             </item>
+             <item row="4" column="1">
+              <widget class="QLabel" name="label_20">
+               <property name="text">
+                <string>TOTAL VOLTAGE</string>
+               </property>
+              </widget>
+             </item>
+             <item row="5" column="0">
+              <widget class="QLCDNumber" name="LCDCURRENT"/>
+             </item>
+             <item row="5" column="1">
+              <widget class="QLCDNumber" name="LCDVOLT"/>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="groupBox_6">
+            <property name="title">
+             <string>MISSION MANAGEMENT</string>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_mission">
+             <item>
+              <widget class="QPushButton" name="BTNFILE">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>40</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>LOAD MISSION FILE</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QGroupBox" name="groupBox_7">
+               <property name="title">
+                <string>SELECT MISSION</string>
+               </property>
+               <layout class="QHBoxLayout" name="horizontalLayout_mission_select">
+                <item>
+                 <widget class="QRadioButton" name="RM1">
+                  <property name="text">
+                   <string>M1</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QRadioButton" name="RM2">
+                  <property name="text">
+                   <string>M2</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QRadioButton" name="RM3">
+                  <property name="text">
+                   <string>M3</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QRadioButton" name="RM4">
+                  <property name="text">
+                   <string>M4</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="BTNMISSION">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>44</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>EXECUTE MISSION</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="groupBox_bottom">
+            <property name="title">
+             <string>SAFETY / CONNECTION</string>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_bottom">
+             <item>
+              <widget class="QPushButton" name="BTNWIFI">
+               <property name="text">
+                <string>WI-FI STATUS</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="BTNSTOP">
+               <property name="text">
+                <string>EMERGENCY STOP</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="rightPanel" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>420</width>
+           <height>0</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_right">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QGroupBox" name="groupBox_8">
+            <property name="title">
+             <string>DECISION LOGIC / COLREG</string>
+            </property>
+            <layout class="QGridLayout" name="gridLayout_decision">
+             <item row="0" column="0">
+              <widget class="QLabel" name="LLOGIC">
+               <property name="minimumSize">
+                <size>
+                 <width>150</width>
+                 <height>120</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>Mission state: Waiting for telemetry</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QTextEdit" name="TXTCOLREG">
+               <property name="minimumSize">
+                <size>
+                 <width>260</width>
+                 <height>120</height>
+                </size>
+               </property>
+               <property name="readOnly">
+                <bool>true</bool>
+               </property>
+               <property name="plainText">
+                <string>Mission: --
+Status: STANDBY
+Distance to next WP: 0.0 m
+COLREG rule: --
+Decision: --
+Reason: --</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="groupBox_5">
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>130</height>
+             </size>
+            </property>
+            <property name="title">
+             <string>STATUS LOG</string>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_log">
+             <item>
+              <widget class="QTextEdit" name="TXTSTATUSLOG">
+               <property name="readOnly">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
