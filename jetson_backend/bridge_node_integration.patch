@@ -1,0 +1,32 @@
+*** Begin Patch
+*** Update File: bridge/bridge_node.py
+@@
+ from utils.mavlink_utilities import create_bridge_topics, create_bridge_services
++from jetson_backend.njord_bridge_http_backend import attach_http_backend
+@@
+         self.create_timer(0.02, self._read_mavlink_messages)
+         self.create_timer(0.2, self._publish_telemetry)
+         self.create_timer(0.1, self._send_rc_override_loop)
+         self.create_timer(1.0, self._connection_watchdog)
++
++        attach_http_backend(self, host="0.0.0.0", port=8000)
+@@
+                 elif msg_type == "SYS_STATUS":
+                     if msg.voltage_battery != 65535:
+                         self.voltage_v = msg.voltage_battery / 1000.0
+                     if msg.current_battery != -1:
+                         self.current_a = msg.current_battery / 100.0
+                     if msg.battery_remaining != -1:
+                         self.battery_remaining = float(msg.battery_remaining)
++
++                elif msg_type in (
++                    "MISSION_COUNT",
++                    "MISSION_ITEM",
++                    "MISSION_ITEM_INT",
++                    "MISSION_REQUEST",
++                    "MISSION_REQUEST_INT",
++                    "MISSION_ACK",
++                ):
++                    if hasattr(self, "http_backend_push_mission_message"):
++                        self.http_backend_push_mission_message(msg)
+*** End Patch

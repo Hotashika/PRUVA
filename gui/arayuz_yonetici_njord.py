@@ -65,8 +65,28 @@ class PortEkrani(QDialog):
         super().__init__()
         uic.loadUi(os.path.join(UI_KLASOR, "port.ui"), self)
         self.veri_sistemi = veri_sistemi
+        self._varsayilan_portlari_ayarla()
         self.pushButton_2.clicked.connect(self.close)
         self.buttonBox.accepted.connect(self.onayla)
+
+    def _varsayilan_portlari_ayarla(self):
+        if self.comboBox.findText("COM") >= 0:
+            self.comboBox.setCurrentText("COM")
+        if self.comboBox_2.findText("57600") >= 0:
+            self.comboBox_2.setCurrentText("57600")
+
+        portlar = self._seri_portlari_bul()
+        if portlar:
+            self.lineEdit.setText(portlar[0])
+        elif not self.lineEdit.text().strip():
+            self.lineEdit.setText("COM6")
+
+    def _seri_portlari_bul(self):
+        try:
+            from serial.tools import list_ports
+            return [port.device for port in list_ports.comports()]
+        except Exception:
+            return []
 
     def onayla(self):
         self.veri_sistemi.baglanti_kur(
@@ -291,15 +311,24 @@ class GorevPlaniEkrani(QDialog):
             return
 
         waypoints = self._waypoints_from_response(response)
-        if waypoints:
+        vehicle_confirmed = bool(response.get("pixhawk_confirmed") or response.get("pixhawk_uploaded"))
+        if waypoints and vehicle_confirmed:
             self._tabloyu_doldur(waypoints)
             self.veri_sistemi.gorev_noktalarini_guncelle(waypoints)
+        elif waypoints:
+            self._tabloyu_doldur(waypoints)
+            self.veri_sistemi.log_sinyali.emit(
+                "INFO: TXT parsed locally, but vehicle upload is not confirmed. Main map route is hidden."
+            )
         else:
             self.tableWidget.setRowCount(0)
             self.veri_sistemi.gorev_noktalarini_guncelle([])
 
         mission_id = response.get("mission_id") or response.get("mission_name") or "backend"
-        self.veri_sistemi.log_sinyali.emit(f"MISSION TXT SYNCED: {mission_id}")
+        if vehicle_confirmed:
+            self.veri_sistemi.log_sinyali.emit(f"MISSION TXT SYNCED TO VEHICLE: {mission_id}")
+        else:
+            self.veri_sistemi.log_sinyali.emit(f"MISSION TXT PARSED ONLY: {mission_id}")
 
     def _waypoints_from_response(self, response):
         raw_waypoints = (
@@ -353,6 +382,9 @@ class NjordAnaEkran(QMainWindow):
         self._mode_combo_son_stil = None
         self._vessel_status_label = None
         self._cog_label = None
+        self._vessel_status_son = None
+        self._vessel_status_aday = None
+        self._vessel_status_aday_zamani = 0.0
 
         self.sistem.veri_guncelle.connect(self.tazele)
         self.sistem.log_sinyali.connect(self.log_ekle)
@@ -1245,6 +1277,8 @@ class NjordAnaEkran(QMainWindow):
     def _vessel_status_bilgisi(self, d):
         mod = str(d.get("mod", "UNKNOWN") or "UNKNOWN").upper()
         link_ok = bool(d.get("link_ok"))
+        heartbeat_seen = bool(d.get("heartbeat_seen"))
+        telemetry_lost = bool(d.get("telemetry_lost"))
         armed = bool(d.get("armed"))
         mission_active = bool(d.get("active_mission"))
         system_status = str(d.get("system_status", "") or "").upper()
@@ -1258,10 +1292,10 @@ class NjordAnaEkran(QMainWindow):
             return "OUT OF CONTROL - Communication Lost", "#c0392b"
         if not d.get("baglanti"):
             return "DISCONNECTED - No Telemetry", "#7f8c8d"
-        if d.get("baglanti") and not link_ok:
+        if telemetry_lost or (heartbeat_seen and not link_ok):
             return "OUT OF CONTROL - Communication Lost", "#c0392b"
-        if not link_ok:
-            return "STANDBY - Waiting for Mission", "#2980b9"
+        if not heartbeat_seen and not link_ok:
+            return "CONNECTING - Waiting for Heartbeat", "#7f8c8d"
         if mod in ("AUTO", "GUIDED"):
             detail = "Executing Mission" if mission_active else "Autonomous Mode Active"
             return f"AUTONOMOUS - {detail}", "#27ae60"
@@ -1277,8 +1311,25 @@ class NjordAnaEkran(QMainWindow):
         if self._vessel_status_label is None:
             return
         status, renk = self._vessel_status_bilgisi(d)
+        hedef = (status, renk)
+        simdi = time.time()
+
+        if self._vessel_status_son == hedef:
+            self._vessel_status_aday = None
+            return
+
+        if self._vessel_status_son is not None:
+            if self._vessel_status_aday != hedef:
+                self._vessel_status_aday = hedef
+                self._vessel_status_aday_zamani = simdi
+                return
+            if simdi - self._vessel_status_aday_zamani < 1.0:
+                return
+
         self._vessel_status_label.setText(status)
         self._vessel_status_label.setStyleSheet(self._vessel_status_stili(renk))
+        self._vessel_status_son = hedef
+        self._vessel_status_aday = None
 
     def _batarya_guncelle(self, d):
         battery = d.get("battery", {})
