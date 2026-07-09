@@ -42,6 +42,7 @@ ARDUROVER_MODS = {
 MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 15.0
+ARDUPILOT_FORCE_ARM_MAGIC = 21196
 
 JETSON_IP = None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
@@ -903,13 +904,14 @@ class NjordVeriSistemi(QObject):
         if self._komut_gonder(
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             1,
+            ARDUPILOT_FORCE_ARM_MAGIC,
         ):
             self._set(
                 requested_arm_state=True,
                 arm_change_pending=True,
-                decision_log="MAVLink ARM command sent. Waiting for heartbeat confirmation...",
+                decision_log="MAVLink FORCE ARM command sent. Waiting for heartbeat confirmation...",
             )
-            self._log("MAVLink ARM command sent -> waiting for heartbeat confirmation")
+            self._log("MAVLink FORCE ARM command sent -> waiting for heartbeat confirmation")
 
     def disarm_yap(self):
         self._disarm_yap_mavlink()
