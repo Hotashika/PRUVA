@@ -889,6 +889,30 @@ class NjordVeriSistemi(QObject):
             target_component = self.connection.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
         return target_system, target_component
 
+    def _arm_disarm_gonder(self, armed, force=False, repeat=1):
+        if not self.connection:
+            self._log("ERROR: No connection. ARM/DISARM command was not sent.")
+            return False
+
+        target_system, target_component = self._mavlink_hedefleri(component_zero=False)
+        force_param = float(ARDUPILOT_FORCE_ARM_MAGIC) if armed and force else 0.0
+        for _ in range(max(1, int(repeat))):
+            self.connection.mav.command_long_send(
+                target_system,
+                target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                1.0 if armed else 0.0,
+                force_param,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            )
+            time.sleep(0.15)
+        return True
+
     def arm_yap(self):
         self._arm_yap_mavlink()
 
@@ -901,11 +925,7 @@ class NjordVeriSistemi(QObject):
                 self._log("INFO: Vehicle is already armed.")
                 return
 
-        if self._komut_gonder(
-            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            1,
-            ARDUPILOT_FORCE_ARM_MAGIC,
-        ):
+        if self._arm_disarm_gonder(armed=True, force=True, repeat=3):
             self._set(
                 requested_arm_state=True,
                 arm_change_pending=True,
@@ -917,10 +937,7 @@ class NjordVeriSistemi(QObject):
         self._disarm_yap_mavlink()
 
     def _disarm_yap_mavlink(self):
-        if self._komut_gonder(
-            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            0,
-        ):
+        if self._arm_disarm_gonder(armed=False, force=False, repeat=2):
             self._set(
                 requested_arm_state=False,
                 arm_change_pending=True,
