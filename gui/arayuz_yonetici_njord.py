@@ -1283,6 +1283,8 @@ class NjordAnaEkran(QMainWindow):
         mission_active = bool(d.get("active_mission"))
         system_status = str(d.get("system_status", "") or "").upper()
 
+        if d.get("radio_failsafe"):
+            return "OUT OF CONTROL - Radio Failsafe", "#c0392b"
         if (
             mod == "EMERGENCY"
             or "FAILSAFE" in system_status

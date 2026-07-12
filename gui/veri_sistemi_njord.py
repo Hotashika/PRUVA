@@ -43,6 +43,7 @@ MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 15.0
 ARDUPILOT_FORCE_ARM_MAGIC = 21196
+MAV_CMD_NJORD_MISSION_START = mavutil.mavlink.MAV_CMD_USER_1
 
 JETSON_IP = None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
@@ -116,6 +117,7 @@ class NjordVeriSistemi(QObject):
         self._seen_message_types = set()
         self._mission_messages = []
         self._last_position_for_cog = None
+        self._last_radio_failsafe = 0.0
 
         self._camera_started = False
         self._camera_running = False
@@ -125,6 +127,7 @@ class NjordVeriSistemi(QObject):
         self.backend_client = BackendClient()
         self._mission_id = None
         self._mission_uploaded_to_pixhawk = False
+        self._mission_component_zero = False
         self._mission_waypoints = []
 
         self._durum = {
@@ -148,6 +151,7 @@ class NjordVeriSistemi(QObject):
             "link_ok": False,
             "heartbeat_seen": False,
             "telemetry_lost": False,
+            "radio_failsafe": False,
             "arm_change_pending": False,
             "requested_arm_state": False,
             "mode_change_pending": False,
@@ -174,6 +178,24 @@ class NjordVeriSistemi(QObject):
     def _snapshot(self):
         with self._lock:
             return copy.deepcopy(self._durum)
+
+    def _battery_state(self):
+        battery = self._durum.get("battery")
+        if not isinstance(battery, dict):
+            battery = {}
+            self._durum["battery"] = battery
+
+        defaults = {
+            "total_voltage": 0.0,
+            "current": 0.0,
+            "percentage": 0,
+            "power_w": 0.0,
+            "remaining_wh": 0.0,
+            "capacity_wh": 0.0,
+        }
+        for key, value in defaults.items():
+            battery.setdefault(key, value)
+        return battery
 
     def gorev_noktalarini_al(self):
         with self._lock:
@@ -210,9 +232,10 @@ class NjordVeriSistemi(QObject):
 
     def _emit_durum(self):
         with self._lock:
+            self._battery_state()
             kopya = copy.deepcopy(self._durum)
 
-        battery = kopya.get("battery", {})
+        battery = kopya.get("battery") or {}
         kopya["voltaj"] = battery.get("total_voltage", 0.0)
         kopya["akim"] = battery.get("current", 0.0)
         kopya["pil_yuzde"] = battery.get("percentage", 0)
@@ -585,6 +608,7 @@ class NjordVeriSistemi(QObject):
                 heartbeat_seen = self._heartbeat_seen
                 baslangictan_beri = time.time() - self._connection_started_at if self._connection_started_at else 0.0
                 telemetry_lost_reported = self._telemetry_lost_reported
+                radio_failsafe = bool(self._durum.get("radio_failsafe"))
 
             if baglanti_var and not heartbeat_seen and baslangictan_beri > HEARTBEAT_TIMEOUT:
                 if not telemetry_lost_reported:
@@ -612,6 +636,12 @@ class NjordVeriSistemi(QObject):
             elif not baglanti_var and gecen_sure <= HEARTBEAT_TIMEOUT and self._last_hb > 0:
                 self._log("Heartbeat restored. Connection is stable.")
                 self._set(baglanti=True, link_ok=True, heartbeat_seen=True, telemetry_lost=False)
+            elif radio_failsafe and self._last_radio_failsafe and time.time() - self._last_radio_failsafe > 12.0:
+                self._set(
+                    radio_failsafe=False,
+                    system_status="MAV_STATE_ACTIVE",
+                    decision_log="Radio failsafe message cleared. Vehicle commands can be retried.",
+                )
 
         self._watchdog_started = False
 
@@ -715,15 +745,16 @@ class NjordVeriSistemi(QObject):
 
         elif msg_type == "SYS_STATUS":
             with self._lock:
+                battery = self._battery_state()
                 voltage = msg.voltage_battery / 1000.0
                 current = msg.current_battery / 100.0
-                self._durum["battery"]["total_voltage"] = voltage
-                self._durum["battery"]["current"] = current
-                self._durum["battery"]["percentage"] = msg.battery_remaining
-                self._durum["battery"]["power_w"] = voltage * current
-                capacity_wh = float(self._durum["battery"].get("capacity_wh", 0.0) or 0.0)
+                battery["total_voltage"] = voltage
+                battery["current"] = current
+                battery["percentage"] = msg.battery_remaining
+                battery["power_w"] = voltage * current
+                capacity_wh = float(battery.get("capacity_wh", 0.0) or 0.0)
                 if capacity_wh > 0:
-                    self._durum["battery"]["remaining_wh"] = capacity_wh * max(0, min(msg.battery_remaining, 100)) / 100.0
+                    battery["remaining_wh"] = capacity_wh * max(0, min(msg.battery_remaining, 100)) / 100.0
             self._emit_durum()
 
         elif msg_type == "COMMAND_ACK":
@@ -731,7 +762,13 @@ class NjordVeriSistemi(QObject):
             result = getattr(msg, "result", None)
             command_name = self._mavlink_command_name(command)
             result_name = self._mavlink_result_name(result)
-            self._log(f"COMMAND ACK: {command_name} -> {result_name}")
+            if command == MAV_CMD_NJORD_MISSION_START and result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                self._log(
+                    f"COMMAND ACK: {command_name} -> {result_name} "
+                    "(Pixhawk ACK; Jetson mission command is also sent to companion/broadcast)"
+                )
+            else:
+                self._log(f"COMMAND ACK: {command_name} -> {result_name}")
 
         elif msg_type == "STATUSTEXT":
             text = getattr(msg, "text", "")
@@ -739,7 +776,21 @@ class NjordVeriSistemi(QObject):
                 text = text.decode(errors="replace")
             text = str(text).strip("\x00").strip()
             if text:
-                self._log(f"PIXHAWK: {text}")
+                if text.upper().startswith("JETSON:"):
+                    self._log(text)
+                else:
+                    self._log(f"PIXHAWK: {text}")
+                lower_text = text.lower()
+                if "radio failsafe" in lower_text:
+                    self._last_radio_failsafe = time.time()
+                    self._set(
+                        radio_failsafe=True,
+                        system_status="FAILSAFE_RADIO",
+                        decision_log=(
+                            "RADIO FAILSAFE ACTIVE: Mission start is blocked. "
+                            "Check RC receiver or Pixhawk failsafe settings in Mission Planner."
+                        ),
+                    )
 
         elif msg_type in (
             "MISSION_COUNT",
@@ -1035,6 +1086,7 @@ class NjordVeriSistemi(QObject):
                     "name": f"WP_{len(waypoints) + 1:02d}",
                     "lat": lat,
                     "lon": lon,
+                    "alt": 100.0,
                     "line": line_no,
                 }
             )
@@ -1098,7 +1150,7 @@ class NjordVeriSistemi(QObject):
         lat_int = int(float(waypoint["lat"]) * 1e7)
         lon_int = int(float(waypoint["lon"]) * 1e7)
         command = mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
-        current = 1 if seq == 0 else 0
+        current = 0
         autocontinue = 1
         altitude = float(waypoint.get("alt", waypoint.get("altitude", 0.0)) or 0.0)
 
@@ -1198,11 +1250,40 @@ class NjordVeriSistemi(QObject):
                 altitude,
             )
 
-    def _mavlink_gorev_yukle(self, waypoints):
-        if not self.connection:
-            raise RuntimeError("No MAVLink connection. Connect to Pixhawk first.")
+    def _mavlink_gorev_baglantisi_hazir_mi(self):
+        with self._lock:
+            baglanti = bool(self._durum.get("baglanti"))
+            link_ok = bool(self._durum.get("link_ok"))
+            heartbeat_seen = bool(self._durum.get("heartbeat_seen"))
+            telemetry_lost = bool(self._durum.get("telemetry_lost"))
 
-        target_system, target_component = self._mavlink_hedefleri(component_zero=False)
+        return bool(self.connection and baglanti and link_ok and heartbeat_seen and not telemetry_lost)
+
+    def _mavlink_gorev_yukle(self, waypoints):
+        if not self._mavlink_gorev_baglantisi_hazir_mi():
+            raise RuntimeError(
+                "No healthy Pixhawk MAVLink telemetry connection. Use CONNECT and wait for heartbeat first."
+            )
+
+        son_hata = None
+        for component_zero in (False, True):
+            try:
+                self._mavlink_gorev_yukle_hedef(waypoints, component_zero=component_zero)
+                self._mission_component_zero = component_zero
+                return
+            except RuntimeError as exc:
+                son_hata = exc
+                if not component_zero:
+                    self._log(f"WARNING: Mission upload retrying with target component 0 after: {exc}")
+                    time.sleep(0.5)
+                    continue
+                raise
+        if son_hata:
+            raise son_hata
+
+    def _mavlink_gorev_yukle_hedef(self, waypoints, component_zero=False):
+        target_system, target_component = self._mavlink_hedefleri(component_zero=component_zero)
+        mission_items = [self._home_waypoint_yap(waypoints)] + list(waypoints)
         self._mission_kuyrugunu_temizle()
 
         try:
@@ -1214,13 +1295,21 @@ class NjordVeriSistemi(QObject):
         except TypeError:
             self.connection.mav.mission_clear_all_send(target_system, target_component)
 
-        time.sleep(0.2)
+        clear_ack = self._mission_mesaji_bekle(("MISSION_ACK",), timeout=2.0)
+        if clear_ack is not None:
+            result = getattr(clear_ack, "type", None)
+            self._log(f"MAVLink mission clear ACK: {self._mavlink_mission_result_name(result)}")
+
         self._mission_kuyrugunu_temizle()
-        self._mission_count_gonder(target_system, target_component, len(waypoints))
-        self._log(f"MAVLink mission upload started: {len(waypoints)} waypoint(s)")
+        self._mission_count_gonder(target_system, target_component, len(mission_items))
+        self._log(
+            f"MAVLink mission upload started: {len(waypoints)} waypoint(s) + home item, "
+            f"target_component={target_component}"
+        )
 
         gonderilenler = set()
-        deadline = time.time() + max(12.0, len(waypoints) * 3.0)
+        resend_count = 0
+        deadline = time.time() + max(12.0, len(mission_items) * 3.0)
         while time.time() < deadline:
             msg = self._mission_mesaji_bekle(
                 ("MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"),
@@ -1228,15 +1317,19 @@ class NjordVeriSistemi(QObject):
             )
             if msg is None:
                 if not gonderilenler:
-                    self._mission_count_gonder(target_system, target_component, len(waypoints))
+                    resend_count += 1
+                    self._mission_count_gonder(target_system, target_component, len(mission_items))
+                    self._log(f"MAVLink mission count resent ({resend_count})")
                 continue
 
             msg_type = msg.get_type()
             if msg_type == "MISSION_ACK":
                 result = getattr(msg, "type", None)
                 result_name = self._mavlink_mission_result_name(result)
-                if len(gonderilenler) < len(waypoints):
+                if len(gonderilenler) < len(mission_items):
                     self._log(f"INFO: Ignoring early mission ACK before all waypoints were sent: {result_name}")
+                    if not gonderilenler:
+                        self._mission_count_gonder(target_system, target_component, len(mission_items))
                     continue
                 if int(result or 0) == mavutil.mavlink.MAV_MISSION_ACCEPTED:
                     self._log("MAVLink mission upload accepted by Pixhawk.")
@@ -1244,20 +1337,40 @@ class NjordVeriSistemi(QObject):
                 raise RuntimeError(f"Mission upload rejected: {result_name}")
 
             seq = int(getattr(msg, "seq", -1))
-            if seq < 0 or seq >= len(waypoints):
+            if seq < 0 or seq >= len(mission_items):
                 raise RuntimeError(f"Pixhawk requested invalid mission item: {seq}")
 
             self._mission_item_gonder(
                 target_system,
                 target_component,
                 seq,
-                waypoints[seq],
-                use_int=(msg_type == "MISSION_REQUEST_INT"),
+                mission_items[seq],
+                use_int=True,
             )
             gonderilenler.add(seq)
-            self._log(f"MAVLink mission item sent: WP {seq + 1}/{len(waypoints)}")
+            if seq == 0:
+                self._log(f"MAVLink mission item sent: HOME/{len(mission_items)}")
+            else:
+                self._log(f"MAVLink mission item sent: WP {seq}/{len(waypoints)}")
 
         raise RuntimeError("Mission upload timed out before Pixhawk ACK.")
+
+    def _home_waypoint_yap(self, waypoints):
+        first = waypoints[0] if waypoints else {"lat": 0.0, "lon": 0.0, "alt": 0.0}
+        with self._lock:
+            lat = float(self._durum.get("lat", 0.0) or 0.0)
+            lon = float(self._durum.get("lon", 0.0) or 0.0)
+
+        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+            lat = float(first.get("lat", 0.0) or 0.0)
+            lon = float(first.get("lon", 0.0) or 0.0)
+
+        return {
+            "name": "HOME",
+            "lat": lat,
+            "lon": lon,
+            "alt": float(first.get("alt", first.get("altitude", 0.0)) or 0.0),
+        }
 
     def _mission_request_list_gonder(self, target_system, target_component):
         try:
@@ -1304,7 +1417,16 @@ class NjordVeriSistemi(QObject):
             "alt": float(getattr(msg, "z", 0.0) or 0.0),
         }
 
+    def _mission_item_gecerli_mi(self, msg, beklenen_seq):
+        msg_type = msg.get_type()
+        if msg_type not in ("MISSION_ITEM_INT", "MISSION_ITEM"):
+            return False
+        if int(getattr(msg, "seq", -1)) != int(beklenen_seq):
+            return False
+        return True
+
     def _waypointler_eslesiyor(self, beklenen, okunan, tolerans=0.00001):
+        okunan = self._okunan_gorevi_normalize_et(beklenen, okunan)
         if len(beklenen) != len(okunan):
             self._log(
                 f"ERROR: Mission verify failed. Uploaded {len(beklenen)} waypoint(s), "
@@ -1325,11 +1447,19 @@ class NjordVeriSistemi(QObject):
 
         return True
 
-    def _mavlink_gorev_oku(self):
-        if not self.connection:
-            raise RuntimeError("No MAVLink connection. Connect to Pixhawk first.")
+    def _okunan_gorevi_normalize_et(self, beklenen, okunan):
+        if len(okunan) == len(beklenen) + 1:
+            self._log("INFO: Ignoring Pixhawk HOME item at mission sequence 0 during verification.")
+            return okunan[1:]
+        return okunan
 
-        target_system, target_component = self._mavlink_hedefleri(component_zero=False)
+    def _mavlink_gorev_oku(self):
+        if not self._mavlink_gorev_baglantisi_hazir_mi():
+            raise RuntimeError(
+                "No healthy Pixhawk MAVLink telemetry connection. Use CONNECT and wait for heartbeat first."
+            )
+
+        target_system, target_component = self._mavlink_hedefleri(component_zero=self._mission_component_zero)
         self._mission_kuyrugunu_temizle()
         self._mission_request_list_gonder(target_system, target_component)
         self._log("Reading mission list from Pixhawk...")
@@ -1342,16 +1472,33 @@ class NjordVeriSistemi(QObject):
         waypoints = []
         for seq in range(count):
             self._mission_request_item_gonder(target_system, target_component, seq)
-            item_msg = self._mission_mesaji_bekle(("MISSION_ITEM_INT", "MISSION_ITEM"), timeout=4.0)
+            item_msg = None
+            read_deadline = time.time() + 5.0
+            while time.time() < read_deadline:
+                candidate = self._mission_mesaji_bekle(("MISSION_ITEM_INT", "MISSION_ITEM"), timeout=1.0)
+                if candidate is None:
+                    continue
+                if self._mission_item_gecerli_mi(candidate, seq):
+                    item_msg = candidate
+                    break
+                self._log(
+                    f"INFO: Ignoring stale mission item seq "
+                    f"{getattr(candidate, 'seq', None)} while waiting for {seq}."
+                )
             if item_msg is None:
                 raise RuntimeError(f"Pixhawk did not return mission item {seq}.")
-            if int(getattr(item_msg, "seq", seq)) != seq:
-                raise RuntimeError(
-                    f"Pixhawk returned unexpected mission item sequence: "
-                    f"{getattr(item_msg, 'seq', None)} while waiting for {seq}."
-                )
             waypoint = self._mission_item_waypoint_yap(item_msg, seq)
             if waypoint is not None:
+                if seq == 0:
+                    self._log(
+                        f"Mission item read: HOME/{count} -> "
+                        f"{waypoint['lat']:.7f}, {waypoint['lon']:.7f}"
+                    )
+                else:
+                    self._log(
+                        f"Mission item read: WP {seq}/{count - 1} -> "
+                        f"{waypoint['lat']:.7f}, {waypoint['lon']:.7f}"
+                    )
                 waypoints.append(waypoint)
 
         self._log(f"Mission read from Pixhawk: {len(waypoints)} waypoint(s)")
@@ -1364,29 +1511,88 @@ class NjordVeriSistemi(QObject):
             return str(result)
 
     def gorev_baslat(self, gorev_adi):
-        with self._lock:
-            armed = self._durum["armed"]
-
-        if not armed:
-            self._log("ERROR: Arm the vehicle before switching to AUTO.")
-            return
-
-        if not self.connection:
-            self._log("ERROR: No MAVLink telemetry connection for mission start. Use CONNECT first.")
+        if not self._mavlink_gorev_baglantisi_hazir_mi():
+            self._log("ERROR: No healthy Pixhawk MAVLink telemetry connection for mission start. Use CONNECT and wait for heartbeat first.")
             return
         if not self._mission_uploaded_to_pixhawk:
-            self._log("WARNING: Mission may not be uploaded to Pixhawk yet. Starting AUTO anyway.")
+            self._log("ERROR: Mission is not confirmed on Pixhawk. Load mission TXT over telemetry before EXECUTE.")
+            self._set(
+                active_mission=None,
+                decision_log="Mission start blocked. Upload TXT to Pixhawk over telemetry first.",
+            )
+            return
 
-        self._mission_start_gonder()
-        self._mod_ayarla_mavlink(10)
+        mission_number = self._gorev_numarasi(gorev_adi)
+        if mission_number is None:
+            self._log(f"ERROR: Unknown mission selection: {gorev_adi}")
+            return
+
+        if not self._jetson_gorev_komutu_gonder(mission_number):
+            self._log(f"ERROR: Jetson mission command could not be sent: {gorev_adi}")
+            return
+
         self._set(
             active_mission=gorev_adi,
             decision_log=(
-                f"MAVLink mission start requested: {gorev_adi} | "
-                "AUTO mode command sent..."
+                f"Mission selected: {gorev_adi}. Pixhawk mission is loaded. "
+                "Jetson mission command was sent over MAVLink."
             ),
         )
-        self._log(f"MAVLink mission start requested: {gorev_adi}")
+        self._log(f"MISSION COMMAND SENT TO JETSON: {gorev_adi}")
+
+    def _gorev_numarasi(self, gorev_adi):
+        text = str(gorev_adi or "").strip().upper()
+        if text.startswith("M"):
+            text = text[1:]
+        try:
+            number = int(text)
+        except ValueError:
+            return None
+        if 1 <= number <= 4:
+            return number
+        return None
+
+    def _jetson_gorev_komutu_gonder(self, mission_number):
+        if not self.connection:
+            return False
+
+        target_system, _target_component = self._mavlink_hedefleri(component_zero=False)
+        companion_component = getattr(
+            mavutil.mavlink,
+            "MAV_COMP_ID_ONBOARD_COMPUTER",
+            191,
+        )
+        target_components = (companion_component, 0)
+        sent_any = False
+
+        for target_component in target_components:
+            try:
+                self.connection.mav.command_long_send(
+                    target_system,
+                    target_component,
+                    MAV_CMD_NJORD_MISSION_START,
+                    0,
+                    float(mission_number),
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                )
+                sent_any = True
+                self._log(
+                    f"MAVLink USER_1 mission command sent for Jetson: "
+                    f"M{mission_number}, target_component={target_component}"
+                )
+                time.sleep(0.05)
+            except Exception as exc:
+                self._log(
+                    f"WARNING: MAVLink Jetson mission command failed for "
+                    f"target_component={target_component}: {exc}"
+                )
+
+        return sent_any
 
     def _mission_start_gonder(self):
         if not self.connection:
@@ -1450,8 +1656,9 @@ class NjordVeriSistemi(QObject):
         }
         self._mission_id = mission_name
 
-        if self.connection:
+        if self._mavlink_gorev_baglantisi_hazir_mi():
             try:
+                self._log("Uploading mission TXT directly to Pixhawk over MAVLink telemetry.")
                 self._mavlink_gorev_yukle(local_waypoints)
                 self._mission_uploaded_to_pixhawk = True
                 response["pixhawk_uploaded"] = True
@@ -1459,17 +1666,14 @@ class NjordVeriSistemi(QObject):
                 try:
                     pixhawk_waypoints = self._mavlink_gorev_oku()
                     if self._waypointler_eslesiyor(local_waypoints, pixhawk_waypoints):
-                        response["waypoints"] = pixhawk_waypoints
+                        response["waypoints"] = local_waypoints
                         response["pixhawk_confirmed"] = True
                         self._log("SUCCESS: Mission list verified from Pixhawk by GUI.")
                     else:
-                        self._mission_uploaded_to_pixhawk = False
-                        response["pixhawk_uploaded"] = False
                         response["pixhawk_confirmed"] = False
                         response["pixhawk_error"] = "Pixhawk mission verification mismatch."
+                        self._log("WARNING: Mission upload ACK was accepted, but read-back verification did not match exactly. Keeping uploaded mission active.")
                 except Exception as exc:
-                    self._mission_uploaded_to_pixhawk = False
-                    response["pixhawk_uploaded"] = False
                     self._log(f"WARNING: Direct Pixhawk mission read failed: {exc}")
             except Exception as exc:
                 self._mission_uploaded_to_pixhawk = False
@@ -1478,7 +1682,8 @@ class NjordVeriSistemi(QObject):
                 self._log(f"ERROR: Direct Pixhawk mission upload failed: {exc}")
         else:
             self._mission_uploaded_to_pixhawk = False
-            self._log("WARNING: Mission parsed for GUI, but Pixhawk telemetry is not connected. Use CONNECT before uploading to vehicle.")
+            response["pixhawk_error"] = "Pixhawk MAVLink telemetry is not connected or heartbeat is not healthy."
+            self._log("WARNING: Mission parsed locally, but Pixhawk telemetry heartbeat is not ready. Use CONNECT before uploading to vehicle.")
 
         if response.get("pixhawk_confirmed") or response.get("pixhawk_uploaded"):
             self.gorev_noktalarini_guncelle(response.get("waypoints") or local_waypoints)
@@ -1516,5 +1721,6 @@ class NjordVeriSistemi(QObject):
 
     def update_battery(self, battery_data):
         with self._lock:
-            self._durum["battery"].update(battery_data)
+            self._battery_state().update(battery_data or {})
         self._emit_durum()
+
