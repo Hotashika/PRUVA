@@ -1602,6 +1602,31 @@ class NjordVeriSistemi(QObject):
         }
         self._mission_id = mission_name
 
+        with self._lock:
+            jetson_ip = self._durum.get("jetson_ip")
+        if not self._valid_ip(jetson_ip):
+            jetson_ip = None
+
+        try:
+            self._log(
+                "Uploading mission waypoint file to Jetson backend: "
+                f"mission={mission_name}, host={jetson_ip or 'configured backend host'}"
+            )
+            backend_response = self.backend_client.upload_mission_waypoints(
+                waypoints_yolu,
+                jetson_ip=jetson_ip,
+                mission_name=mission_name,
+            )
+            response["backend_used"] = True
+            response["backend_response"] = backend_response
+            self._log(
+                "SUCCESS: Mission waypoint file saved by Jetson backend: "
+                f"{backend_response.get('filename', mission_name)}"
+            )
+        except Exception as exc:
+            response["backend_error"] = str(exc)
+            self._log(f"WARNING: Jetson waypoint file upload failed: {exc}")
+
         if self._mavlink_gorev_baglantisi_hazir_mi():
             try:
                 self._log("Uploading mission waypoints directly to Pixhawk over MAVLink telemetry.")
@@ -1678,4 +1703,3 @@ class NjordVeriSistemi(QObject):
         with self._lock:
             self._battery_state().update(battery_data or {})
         self._emit_durum()
-
