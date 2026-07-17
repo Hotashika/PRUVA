@@ -344,6 +344,18 @@ class GorevPlaniEkrani(QDialog):
             self.secili_waypoints_yolu = yol
             self.pushButton.setText(os.path.basename(yol))
             self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS SELECTED: {os.path.basename(yol)}")
+            try:
+                parsed = self.veri_sistemi.gorev_waypoints_onizle(yol)
+                waypoints = self._waypoints_from_response({"waypoints": parsed})
+                self._tabloyu_doldur(waypoints)
+                self.veri_sistemi.log_sinyali.emit(
+                    f"MISSION PREVIEW READY: {len(waypoints)} waypoint(s)"
+                )
+            except Exception as exc:
+                self.tableWidget.setRowCount(0)
+                self.veri_sistemi.log_sinyali.emit(
+                    f"ERROR: Mission preview failed: {exc}"
+                )
 
     def yukle(self):
         if not self.secili_waypoints_yolu:

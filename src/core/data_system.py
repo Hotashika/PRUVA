@@ -1059,14 +1059,19 @@ class NjordVeriSistemi(QObject):
 
     def _qgc_wpl_satiri_oku(self, line, waypoint_index, line_no):
         parts = re.split(r"[\t,; ]+", line.strip())
-        if len(parts) < 11:
+        if len(parts) < 12:
             return None
 
         try:
+            seq = int(float(parts[0]))
+            current = int(float(parts[1]))
+            frame = int(float(parts[2]))
             command = int(float(parts[3]))
+            param1, param2, param3, param4 = (float(value) for value in parts[4:8])
             lat = float(parts[8])
             lon = float(parts[9])
             alt = float(parts[10])
+            autocontinue = int(float(parts[11]))
         except (TypeError, ValueError, IndexError):
             return None
 
@@ -1075,11 +1080,22 @@ class NjordVeriSistemi(QObject):
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return None
 
+        is_home = seq == 0 and current == 1
         return {
-            "name": f"WP_{waypoint_index:02d}",
+            "name": "HOME" if is_home else f"WP_{seq:02d}",
+            "seq": seq,
+            "current": current,
+            "frame": frame,
+            "command": command,
+            "param1": param1,
+            "param2": param2,
+            "param3": param3,
+            "param4": param4,
             "lat": lat,
             "lon": lon,
             "alt": alt,
+            "autocontinue": autocontinue,
+            "is_home": is_home,
             "line": line_no,
         }
 
@@ -1111,106 +1127,51 @@ class NjordVeriSistemi(QObject):
     def _mission_item_gonder(self, target_system, target_component, seq, waypoint, use_int=True):
         lat_int = int(float(waypoint["lat"]) * 1e7)
         lon_int = int(float(waypoint["lon"]) * 1e7)
-        command = mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
-        current = 0
-        autocontinue = 1
+        command = int(waypoint.get("command", mavutil.mavlink.MAV_CMD_NAV_WAYPOINT))
+        current = int(waypoint.get("current", 0))
+        autocontinue = int(waypoint.get("autocontinue", 1))
+        frame = int(waypoint.get("frame", mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT))
+        int_frames = {
+            mavutil.mavlink.MAV_FRAME_GLOBAL: mavutil.mavlink.MAV_FRAME_GLOBAL_INT,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT: mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+        }
+        int_frame = int_frames.get(frame, frame)
+        params = [float(waypoint.get(f"param{index}", 0.0) or 0.0) for index in range(1, 5)]
         altitude = float(waypoint.get("alt", waypoint.get("altitude", 0.0)) or 0.0)
 
         if not use_int:
             self._mission_item_float_gonder(
-                target_system,
-                target_component,
-                seq,
-                waypoint,
-                command,
-                current,
-                autocontinue,
-                altitude,
+                target_system, target_component, seq, waypoint, frame,
+                command, current, autocontinue, params, altitude,
             )
             return
 
+        args = (
+            target_system, target_component, seq, int_frame, command,
+            current, autocontinue, *params, lat_int, lon_int, altitude,
+        )
         try:
             self.connection.mav.mission_item_int_send(
-                target_system,
-                target_component,
-                seq,
-                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-                command,
-                current,
-                autocontinue,
-                0,
-                0,
-                0,
-                float("nan"),
-                lat_int,
-                lon_int,
-                altitude,
-                mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                *args, mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
             )
         except TypeError:
-            self.connection.mav.mission_item_int_send(
-                target_system,
-                target_component,
-                seq,
-                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-                command,
-                current,
-                autocontinue,
-                0,
-                0,
-                0,
-                float("nan"),
-                lat_int,
-                lon_int,
-                altitude,
-            )
+            self.connection.mav.mission_item_int_send(*args)
 
     def _mission_item_float_gonder(
-        self,
-        target_system,
-        target_component,
-        seq,
-        waypoint,
-        command,
-        current,
-        autocontinue,
-        altitude,
+        self, target_system, target_component, seq, waypoint, frame,
+        command, current, autocontinue, params, altitude,
     ):
+        args = (
+            target_system, target_component, seq, frame, command,
+            current, autocontinue, *params,
+            float(waypoint["lat"]), float(waypoint["lon"]), altitude,
+        )
         try:
             self.connection.mav.mission_item_send(
-                target_system,
-                target_component,
-                seq,
-                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                command,
-                current,
-                autocontinue,
-                0,
-                0,
-                0,
-                float("nan"),
-                float(waypoint["lat"]),
-                float(waypoint["lon"]),
-                altitude,
-                mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
+                *args, mavutil.mavlink.MAV_MISSION_TYPE_MISSION,
             )
         except TypeError:
-            self.connection.mav.mission_item_send(
-                target_system,
-                target_component,
-                seq,
-                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                command,
-                current,
-                autocontinue,
-                0,
-                0,
-                0,
-                float("nan"),
-                float(waypoint["lat"]),
-                float(waypoint["lon"]),
-                altitude,
-            )
+            self.connection.mav.mission_item_send(*args)
 
     def _mavlink_gorev_baglantisi_hazir_mi(self):
         with self._lock:
@@ -1243,9 +1204,15 @@ class NjordVeriSistemi(QObject):
         if son_hata:
             raise son_hata
 
+    def _mission_items_hazirla(self, waypoints):
+        items = list(waypoints)
+        if items and items[0].get("is_home"):
+            return items
+        return [self._home_waypoint_yap(items)] + items
+
     def _mavlink_gorev_yukle_hedef(self, waypoints, component_zero=False):
         target_system, target_component = self._mavlink_hedefleri(component_zero=component_zero)
-        mission_items = [self._home_waypoint_yap(waypoints)] + list(waypoints)
+        mission_items = self._mission_items_hazirla(waypoints)
         self._mission_kuyrugunu_temizle()
 
         try:
@@ -1265,7 +1232,7 @@ class NjordVeriSistemi(QObject):
         self._mission_kuyrugunu_temizle()
         self._mission_count_gonder(target_system, target_component, len(mission_items))
         self._log(
-            f"MAVLink mission upload started: {len(waypoints)} waypoint(s) + home item, "
+            f"MAVLink mission upload started: {len(mission_items)} mission item(s), "
             f"target_component={target_component}"
         )
 
@@ -1329,9 +1296,19 @@ class NjordVeriSistemi(QObject):
 
         return {
             "name": "HOME",
+            "seq": 0,
+            "current": 1,
+            "frame": mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            "command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+            "param1": 0.0,
+            "param2": 0.0,
+            "param3": 0.0,
+            "param4": 0.0,
             "lat": lat,
             "lon": lon,
             "alt": float(first.get("alt", first.get("altitude", 0.0)) or 0.0),
+            "autocontinue": 1,
+            "is_home": True,
         }
 
     def _mission_request_list_gonder(self, target_system, target_component):
@@ -1372,11 +1349,23 @@ class NjordVeriSistemi(QObject):
         if not (-90 <= float(lat) <= 90 and -180 <= float(lon) <= 180):
             return None
 
+        current = int(getattr(msg, "current", 0) or 0)
+        is_home = seq == 0
         return {
-            "name": f"WP_{seq + 1:02d}",
+            "name": "HOME" if is_home else f"WP_{seq:02d}",
+            "seq": seq,
+            "current": current,
+            "frame": int(getattr(msg, "frame", mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT)),
+            "command": command,
+            "param1": float(getattr(msg, "param1", 0.0) or 0.0),
+            "param2": float(getattr(msg, "param2", 0.0) or 0.0),
+            "param3": float(getattr(msg, "param3", 0.0) or 0.0),
+            "param4": float(getattr(msg, "param4", 0.0) or 0.0),
             "lat": float(lat),
             "lon": float(lon),
             "alt": float(getattr(msg, "z", 0.0) or 0.0),
+            "autocontinue": int(getattr(msg, "autocontinue", 1) or 0),
+            "is_home": is_home,
         }
 
     def _mission_item_gecerli_mi(self, msg, beklenen_seq):
@@ -1388,7 +1377,8 @@ class NjordVeriSistemi(QObject):
         return True
 
     def _waypointler_eslesiyor(self, beklenen, okunan, tolerans=0.00001):
-        okunan = self._okunan_gorevi_normalize_et(beklenen, okunan)
+        beklenen = [item for item in beklenen if not item.get("is_home")]
+        okunan = [item for item in okunan if not item.get("is_home")]
         if len(beklenen) != len(okunan):
             self._log(
                 f"ERROR: Mission verify failed. Uploaded {len(beklenen)} waypoint(s), "
@@ -1408,12 +1398,6 @@ class NjordVeriSistemi(QObject):
                 return False
 
         return True
-
-    def _okunan_gorevi_normalize_et(self, beklenen, okunan):
-        if len(okunan) == len(beklenen) + 1:
-            self._log("INFO: Ignoring Pixhawk HOME item at mission sequence 0 during verification.")
-            return okunan[1:]
-        return okunan
 
     def _mavlink_gorev_oku(self):
         if not self._mavlink_gorev_baglantisi_hazir_mi():
@@ -1603,6 +1587,8 @@ class NjordVeriSistemi(QObject):
         waypoints_yolu = str(waypoints_yolu)
         mission_name = mission_name or Path(waypoints_yolu).stem
         local_waypoints = self._waypoints_dosyasini_oku(waypoints_yolu)
+        mission_items = self._mission_items_hazirla(local_waypoints)
+        display_waypoints = [item for item in local_waypoints if not item.get("is_home")]
         pixhawk_waypoints = None
 
         response = {
@@ -1611,7 +1597,7 @@ class NjordVeriSistemi(QObject):
             "mission_id": mission_name,
             "mission_name": mission_name,
             "message": "Mission waypoints parsed locally.",
-            "waypoints": local_waypoints,
+            "waypoints": display_waypoints,
             "backend_used": False,
             "pixhawk_uploaded": False,
             "pixhawk_confirmed": False,
@@ -1627,8 +1613,8 @@ class NjordVeriSistemi(QObject):
                 self._log("SUCCESS: Mission uploaded directly to Pixhawk by GUI.")
                 try:
                     pixhawk_waypoints = self._mavlink_gorev_oku()
-                    if self._waypointler_eslesiyor(local_waypoints, pixhawk_waypoints):
-                        response["waypoints"] = local_waypoints
+                    if self._waypointler_eslesiyor(mission_items, pixhawk_waypoints):
+                        response["waypoints"] = display_waypoints
                         response["pixhawk_confirmed"] = True
                         self._log("SUCCESS: Mission list verified from Pixhawk by GUI.")
                     else:
@@ -1648,7 +1634,7 @@ class NjordVeriSistemi(QObject):
             self._log("WARNING: Mission parsed locally, but Pixhawk telemetry heartbeat is not ready. Use CONNECT before uploading to vehicle.")
 
         if response.get("pixhawk_confirmed") or response.get("pixhawk_uploaded"):
-            self.gorev_noktalarini_guncelle(response.get("waypoints") or local_waypoints)
+            self.gorev_noktalarini_guncelle(response.get("waypoints") or display_waypoints)
             self._set(
                 active_mission=self._mission_id,
                 decision_log="Mission uploaded to vehicle and displayed on map.",
@@ -1661,6 +1647,11 @@ class NjordVeriSistemi(QObject):
             )
             self._log("INFO: Mission waypoints were parsed only. Vehicle/Pixhawk upload was not confirmed, so map route was not displayed.")
         return response
+
+    def gorev_waypoints_onizle(self, waypoints_yolu):
+        """Bir mission dosyasını araca göndermeden yerelde ayrıştırır."""
+        items = self._waypoints_dosyasini_oku(waypoints_yolu)
+        return [item for item in items if not item.get("is_home")]
 
     def gorev_txt_yukle(self, txt_yolu, mission_name=None):
         """Geriye dönük uyumluluk için eski yükleyici adı."""
