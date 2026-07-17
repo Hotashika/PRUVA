@@ -46,10 +46,11 @@ class BackendClient:
         if not host:
             raise BackendClientError("Jetson backend host is not configured and Jetson IP is not available.")
 
+        upload_filename = self._mission_filename(mission_name, waypoints_path.name)
         payload = {
             "type": "mission_waypoints_upload",
             "mission_name": mission_name or self.config["mission"]["default_name"],
-            "filename": waypoints_path.name,
+            "filename": upload_filename,
             "content": self._read_text(waypoints_path),
             "upload_to_pixhawk": bool(self.config["mission"].get("upload_to_pixhawk", True)),
             "client_time": time.time(),
@@ -59,6 +60,13 @@ class BackendClient:
         if protocol == "tcp":
             return self._post_tcp(host, payload)
         return self._post_http(host, self.config["backend"].get("mission_upload_path"), payload)
+
+    @staticmethod
+    def _mission_filename(mission_name, original_filename):
+        if not mission_name:
+            return original_filename
+        name = Path(str(mission_name)).name
+        return name if name.lower().endswith(".waypoints") else f"{name}.waypoints"
 
     def upload_mission_txt(self, txt_path, jetson_ip=None, mission_name=None):
         """Geriye dönük uyumluluk için eski yükleyici adı."""

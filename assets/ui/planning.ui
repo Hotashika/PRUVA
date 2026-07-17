@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>461</width>
-    <height>538</height>
+    <height>588</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -17,7 +17,7 @@
    <property name="geometry">
     <rect>
      <x>120</x>
-     <y>380</y>
+     <y>430</y>
      <width>181</width>
      <height>51</height>
     </rect>
@@ -43,7 +43,7 @@ QPushButton:hover {
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>450</y>
+     <y>510</y>
      <width>211</width>
      <height>51</height>
     </rect>
@@ -61,6 +61,38 @@ QPushButton:hover { background-color: #2ecc71; }</string>
    <property name="text">
     <string>UPLOAD WAYPOINTS</string>
    </property>
+  </widget>
+  <widget class="QLabel" name="taskSelectionLabel">
+   <property name="geometry">
+    <rect><x>30</x><y>350</y><width>61</width><height>31</height></rect>
+   </property>
+   <property name="text"><string>TASK:</string></property>
+   <property name="styleSheet"><string>font-weight: bold;</string></property>
+  </widget>
+  <widget class="QRadioButton" name="task1RadioButton">
+   <property name="geometry">
+    <rect><x>100</x><y>350</y><width>71</width><height>31</height></rect>
+   </property>
+   <property name="text"><string>TASK 1</string></property>
+   <property name="checked"><bool>true</bool></property>
+  </widget>
+  <widget class="QRadioButton" name="task2RadioButton">
+   <property name="geometry">
+    <rect><x>180</x><y>350</y><width>71</width><height>31</height></rect>
+   </property>
+   <property name="text"><string>TASK 2</string></property>
+  </widget>
+  <widget class="QRadioButton" name="task3RadioButton">
+   <property name="geometry">
+    <rect><x>260</x><y>350</y><width>71</width><height>31</height></rect>
+   </property>
+   <property name="text"><string>TASK 3</string></property>
+  </widget>
+  <widget class="QRadioButton" name="task4RadioButton">
+   <property name="geometry">
+    <rect><x>340</x><y>350</y><width>71</width><height>31</height></rect>
+   </property>
+   <property name="text"><string>TASK 4</string></property>
   </widget>
   <widget class="QPushButton" name="pushButton_4">
    <property name="geometry">

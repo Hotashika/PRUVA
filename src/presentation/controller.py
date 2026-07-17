@@ -333,6 +333,12 @@ class GorevPlaniEkrani(QDialog):
         self.pushButton.clicked.connect(self.dosya_sec)
         self.pushButton_2.clicked.connect(self.yukle)
 
+    def _secili_gorev_dosya_adi(self):
+        for task_no in range(1, 5):
+            if getattr(self, f"task{task_no}RadioButton").isChecked():
+                return f"njord_task{task_no}.waypoints"
+        return "njord_task1.waypoints"
+
     def dosya_sec(self):
         yol, _ = QFileDialog.getOpenFileName(
             self,
@@ -363,7 +369,11 @@ class GorevPlaniEkrani(QDialog):
             return
 
         try:
-            response = self.veri_sistemi.gorev_waypoints_yukle(self.secili_waypoints_yolu)
+            gorev_dosya_adi = self._secili_gorev_dosya_adi()
+            response = self.veri_sistemi.gorev_waypoints_yukle(
+                self.secili_waypoints_yolu,
+                mission_name=gorev_dosya_adi,
+            )
         except Exception as exc:
             self.veri_sistemi.log_sinyali.emit(f"ERROR: Mission waypoints upload failed: {exc}")
             return
