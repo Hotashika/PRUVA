@@ -8,14 +8,15 @@ from PyQt5.QtGui import QColor, QBrush, QFont, QPainter, QPen, QPixmap
 from PyQt5.QtGui import QPolygonF
 from PyQt5.QtWidgets import QDialog, QFileDialog, QMainWindow, QTableWidgetItem
 
-try:
-    from gui.veri_sistemi_njord import NjordVeriSistemi
-except ImportError:
-    from veri_sistemi_njord import NjordVeriSistemi
+from ..core.data_system import NjordVeriSistemi
 
 
-KLASOR_YOLU = os.path.dirname(os.path.abspath(__file__))
-UI_KLASOR = os.path.join(KLASOR_YOLU, "ui")
+PAKET_KLASORU = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJE_KLASORU = os.path.dirname(PAKET_KLASORU)
+KAYNAK_KLASORU = os.path.join(PROJE_KLASORU, "assets")
+UI_KLASOR = os.path.join(KAYNAK_KLASORU, "ui")
+GORSEL_KLASORU = os.path.join(KAYNAK_KLASORU, "images")
+WAYPOINT_KLASORU = os.path.join(PROJE_KLASORU, "missions", "waypoints")
 
 ALIGN_CENTER = getattr(getattr(Qt, "AlignmentFlag", None), "AlignCenter", None)
 if ALIGN_CENTER is None:
@@ -291,7 +292,7 @@ class GorevPlaniEkrani(QDialog):
         yol, _ = QFileDialog.getOpenFileName(
             self,
             "Open File",
-            "",
+            WAYPOINT_KLASORU,
             "QGroundControl Waypoints (*.waypoints)",
         )
         if yol:
@@ -592,7 +593,7 @@ class NjordAnaEkran(QMainWindow):
             )
             layout.addWidget(self.LALGORITHM)
 
-        gorsel_yolu = os.path.join(KLASOR_YOLU, "images", "colreg.jpeg")
+        gorsel_yolu = os.path.join(GORSEL_KLASORU, "colreg.jpeg")
         if os.path.exists(gorsel_yolu):
             pixmap = QPixmap(gorsel_yolu)
             if not pixmap.isNull():
@@ -1000,7 +1001,7 @@ class NjordAnaEkran(QMainWindow):
         if not hasattr(self, "LMAINMAP"):
             return
 
-        map_path = os.path.join(KLASOR_YOLU, "images", MAP_IMAGE_FILE)
+        map_path = os.path.join(GORSEL_KLASORU, MAP_IMAGE_FILE)
         if os.path.exists(map_path):
             self.LMAINMAP.setPixmap(QPixmap(map_path))
             self.LMAINMAP.setScaledContents(True)

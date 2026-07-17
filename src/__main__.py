@@ -1,6 +1,6 @@
 import sys
 from PyQt5 import QtCore, QtWidgets
-from gui.arayuz_yonetici_njord import NjordAnaEkran
+from .presentation.controller import NjordAnaEkran
 
 # Hata giderici yama
 for attr, val in [('Dec', 1), ('Flat', 0), 

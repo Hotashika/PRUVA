@@ -1,12 +1,10 @@
 import copy
-import importlib.util
 import ipaddress
 import math
 import platform
 import re
 import socket
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -16,10 +14,8 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QImage
 from pymavlink import mavutil
 
-try:
-    from gui.backend_client_njord import BackendClient
-except ImportError:
-    from backend_client_njord import BackendClient
+from ..services.backend_client import BackendClient
+from ..streaming import video_client as grap_video
 
 
 ARDUROVER_MODS = {
@@ -52,47 +48,6 @@ JETSON_BACKEND_PORT = 8000
 NETWORK_SCAN_INTERVAL = 30.0
 
 
-def _get_grap_video_path():
-    from pathlib import Path
-
-    repo_root = Path(__file__).resolve().parent.parent
-    candidates = [
-        repo_root / "Fetch Data" / "grap_video.py",
-        repo_root / "fetch_data" / "grap_video.py",
-        repo_root / "Fetch_Data" / "grap_video.py",
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    return None
-
-
-def _load_grap_video():
-    try:
-        import importlib as _importlib
-
-        client_side = _importlib.import_module("zed.task1.client_side")
-        return getattr(client_side, "grap_video", client_side)
-    except Exception:
-        pass
-
-    gv_path = _get_grap_video_path()
-    if not gv_path:
-        return None
-
-    try:
-        spec = importlib.util.spec_from_file_location("grap_video", str(gv_path))
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["grap_video"] = module
-        spec.loader.exec_module(module)
-        return module
-    except Exception:
-        return None
-
-
-grap_video = _load_grap_video()
 
 
 class NjordVeriSistemi(QObject):
@@ -1522,10 +1477,10 @@ class NjordVeriSistemi(QObject):
             self._log("ERROR: No healthy Pixhawk MAVLink telemetry connection for mission start. Use CONNECT and wait for heartbeat first.")
             return
         if not self._mission_uploaded_to_pixhawk:
-            self._log("ERROR: Mission is not confirmed on Pixhawk. Load mission TXT over telemetry before EXECUTE.")
+            self._log("ERROR: Mission is not confirmed on Pixhawk. Load a .waypoints mission over telemetry before EXECUTE.")
             self._set(
                 active_mission=None,
-                decision_log="Mission start blocked. Upload TXT to Pixhawk over telemetry first.",
+                decision_log="Mission start blocked. Upload a .waypoints file to Pixhawk over telemetry first.",
             )
             return
 

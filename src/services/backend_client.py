@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
         "timeout_s": 5,
     },
     "mission": {
-        "default_name": "UPLOADED_TXT",
+        "default_name": "UPLOADED_WAYPOINTS",
         "upload_to_pixhawk": True,
     },
 }
@@ -31,24 +31,26 @@ class BackendClientError(RuntimeError):
 
 class BackendClient:
     def __init__(self, config_path=None):
-        repo_root = Path(__file__).resolve().parent.parent
+        repo_root = Path(__file__).resolve().parents[2]
         self.config_path = Path(config_path) if config_path else repo_root / "config" / "settings.yaml"
         self.config = self._load_config()
 
-    def upload_mission_txt(self, txt_path, jetson_ip=None, mission_name=None):
-        txt_path = Path(txt_path)
-        if not txt_path.exists():
-            raise BackendClientError(f"Mission file not found: {txt_path}")
+    def upload_mission_waypoints(self, waypoints_path, jetson_ip=None, mission_name=None):
+        waypoints_path = Path(waypoints_path)
+        if waypoints_path.suffix.lower() != ".waypoints":
+            raise BackendClientError("Mission file must have a .waypoints extension.")
+        if not waypoints_path.exists():
+            raise BackendClientError(f"Mission file not found: {waypoints_path}")
 
         host = self._backend_host(jetson_ip)
         if not host:
             raise BackendClientError("Jetson backend host is not configured and Jetson IP is not available.")
 
         payload = {
-            "type": "mission_txt_upload",
+            "type": "mission_waypoints_upload",
             "mission_name": mission_name or self.config["mission"]["default_name"],
-            "filename": txt_path.name,
-            "content": self._read_text(txt_path),
+            "filename": waypoints_path.name,
+            "content": self._read_text(waypoints_path),
             "upload_to_pixhawk": bool(self.config["mission"].get("upload_to_pixhawk", True)),
             "client_time": time.time(),
         }
@@ -57,6 +59,10 @@ class BackendClient:
         if protocol == "tcp":
             return self._post_tcp(host, payload)
         return self._post_http(host, self.config["backend"].get("mission_upload_path"), payload)
+
+    def upload_mission_txt(self, txt_path, jetson_ip=None, mission_name=None):
+        """Geriye dönük uyumluluk için eski yükleyici adı."""
+        return self.upload_mission_waypoints(txt_path, jetson_ip, mission_name)
 
     def start_mission(self, mission_name, mission_id=None, jetson_ip=None):
         host = self._backend_host(jetson_ip)

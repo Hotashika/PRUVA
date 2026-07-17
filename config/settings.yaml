@@ -12,7 +12,7 @@ backend:
   timeout_s: 5
 
 mission:
-  default_name: UPLOADED_TXT
+  default_name: UPLOADED_WAYPOINTS
   upload_to_pixhawk: true
 
 camera:

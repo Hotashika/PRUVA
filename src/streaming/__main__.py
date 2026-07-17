@@ -1,4 +1,4 @@
-from fetch_data.grap_video import start
+from .video_client import start
 
 
 if __name__ == "__main__":

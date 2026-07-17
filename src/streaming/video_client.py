@@ -9,7 +9,10 @@ PORT = 5000
 
 
 def get_ip_by_mac(target_mac: str) -> str | None:
-    result = subprocess.run(["arp", "-a"], capture_output=True, text=True)
+    try:
+        result = subprocess.run(["arp", "-a"], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return None
     for line in result.stdout.splitlines():
         normalized_line = line.lower().replace("-", ":")
         if target_mac in normalized_line:
@@ -20,6 +23,7 @@ def get_ip_by_mac(target_mac: str) -> str | None:
     return None
 
 
+# noinspection D
 def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=None):
     url = f"http://{jetson_ip}:{PORT}/video_feed"
 
