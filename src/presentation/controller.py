@@ -1,5 +1,7 @@
 import os
 import time
+from datetime import datetime
+from pathlib import Path
 
 from PyQt5 import uic
 from PyQt5 import QtCore, QtWidgets
@@ -78,15 +80,58 @@ class PortEkrani(QDialog):
 
         portlar = self._seri_portlari_bul()
         if portlar:
-            self.lineEdit.setText(portlar[0])
+            secili = portlar[0]
+            self.lineEdit.setText(secili["device"])
+            if secili["is_rfd"]:
+                self.veri_sistemi.log_sinyali.emit(
+                    f"RFD RADIO AUTO-DETECTED: {secili['device']} ({secili['description']})"
+                )
+            else:
+                self.veri_sistemi.log_sinyali.emit(
+                    f"INFO: RFD identity was not confirmed; using serial port: {secili['device']}"
+                )
         elif not self.lineEdit.text().strip():
             self.lineEdit.setText("COM6")
+            self.veri_sistemi.log_sinyali.emit("WARNING: No serial port was detected.")
+
+
+    @staticmethod
+    def _seri_port_puani(port):
+        alanlar = " ".join(
+            str(getattr(port, alan, "") or "")
+            for alan in ("description", "manufacturer", "product", "interface", "hwid")
+        ).lower()
+        if any(ipucu in alanlar for ipucu in ("rfd900", "rfd868", "rfd radio", "rfdesign", "rf design")):
+            return 100
+        if "sik" in alanlar and any(ipucu in alanlar for ipucu in ("radio", "telemetry", "modem")):
+            return 80
+        if "telemetry radio" in alanlar:
+            return 70
+        device = str(getattr(port, "device", "") or "").lower()
+        if "ttyusb" in device or "ttyacm" in device:
+            return 10
+        if device.startswith("com"):
+            return 5
+        return 0
 
     def _seri_portlari_bul(self):
         try:
             from serial.tools import list_ports
-            return [port.device for port in list_ports.comports()]
-        except Exception:
+            sonuclar = []
+            for sira, port in enumerate(list_ports.comports()):
+                puan = self._seri_port_puani(port)
+                sonuclar.append(
+                    {
+                        "device": port.device,
+                        "description": str(getattr(port, "description", "") or "Unknown"),
+                        "is_rfd": puan >= 70,
+                        "score": puan,
+                        "order": sira,
+                    }
+                )
+            return sorted(sonuclar, key=lambda item: (-item["score"], item["order"]))
+        except Exception as exc:
+            self.veri_sistemi.log_sinyali.emit(f"WARNING: Serial port scan failed: {exc}")
             return []
 
     def onayla(self):
@@ -375,6 +420,9 @@ class NjordAnaEkran(QMainWindow):
         self._yeni_ui_layout_duzelt()
         self.setMinimumSize(1280, 720)
 
+        self._log_gecmisi = []
+        self._log_dosyasi = self._log_dosyasini_hazirla()
+
         self.sistem = NjordVeriSistemi()
         self.harita_pencere = None
         self.plan_pencere = None
@@ -410,7 +458,6 @@ class NjordAnaEkran(QMainWindow):
             getattr(self, "label_10", None),
         ]
         self._log_etiketleri = [etiket for etiket in self._log_etiketleri if etiket is not None]
-        self._log_gecmisi = []
         for etiket in self._log_etiketleri:
             etiket.setText("")
             etiket.setStyleSheet("")
@@ -1397,6 +1444,31 @@ class NjordAnaEkran(QMainWindow):
         self._vessel_status_guncelle(d)
         self.label_8.setText(d.get("decision_log", "Waiting for mission data..."))
 
+        bagli = bool(
+            d.get("baglanti")
+            and d.get("link_ok")
+            and d.get("heartbeat_seen")
+            and not d.get("telemetry_lost")
+        )
+        if bagli:
+            self.pushButton.setStyleSheet(
+                "background-color: #2ecc71; color: white; font-weight: bold; "
+                "border-radius: 8px; border: 2px solid #27ae60; padding: 8px;"
+            )
+            self.pushButton.setText("CONNECTED")
+        elif d.get("baglanti"):
+            self.pushButton.setStyleSheet(
+                "background-color: #f39c12; color: white; font-weight: bold; "
+                "border-radius: 8px; border: 2px solid #d68910; padding: 8px;"
+            )
+            self.pushButton.setText("CONNECTING...")
+        else:
+            self.pushButton.setStyleSheet(
+                "background-color: #e74c3c; color: white; font-weight: bold; "
+                "border-radius: 8px; border: 2px solid #c0392b; padding: 8px;"
+            )
+            self.pushButton.setText("CONNECT")
+
         if hasattr(self, "pushButton_wifi"):
             if d.get("wifi_aktif"):
                 self.pushButton_wifi.setStyleSheet(
@@ -1485,7 +1557,31 @@ class NjordAnaEkran(QMainWindow):
         self._armed_butonunu_sabitle()
         self._disarmed_butonunu_sabitle()
 
+    def _log_dosyasini_hazirla(self):
+        try:
+            logs_klasoru = Path(PROJE_KLASORU) / "logs"
+            logs_klasoru.mkdir(parents=True, exist_ok=True)
+            log_yolu = logs_klasoru / f"pruva_gui_{datetime.now():%Y%m%d_%H%M%S}.log"
+            log_yolu.write_text(
+                f"{datetime.now():%Y-%m-%d %H:%M:%S} | PRUVA GUI SESSION STARTED\n",
+                encoding="utf-8",
+            )
+            return log_yolu
+        except OSError:
+            return None
+
+    def _log_dosyaya_yaz(self, mesaj):
+        if self._log_dosyasi is None:
+            return
+        try:
+            with self._log_dosyasi.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S.%f} | {mesaj}\n")
+        except OSError:
+            self._log_dosyasi = None
+
     def log_ekle(self, m):
+        m = str(m)
+        self._log_dosyaya_yaz(m)
         temel_log_stili = "font-size: 12pt; font-weight: bold;"
         if "!!!" in m or "ERROR" in m or "FAIL" in m:
             stil = temel_log_stili + " color: #e74c3c;"
@@ -1498,9 +1594,9 @@ class NjordAnaEkran(QMainWindow):
         else:
             stil = temel_log_stili + " color: #3498db;"
 
-        self._log_gecmisi.insert(0, (f">> {m}", stil))
+        self._log_gecmisi.append((f">> {m}", stil))
         log_limit = 80 if hasattr(self, "TXTSTATUSLOG") else len(self._log_etiketleri)
-        self._log_gecmisi = self._log_gecmisi[:log_limit]
+        self._log_gecmisi = self._log_gecmisi[-log_limit:]
 
         if hasattr(self, "TXTSTATUSLOG"):
             html_lines = []
@@ -1519,6 +1615,8 @@ class NjordAnaEkran(QMainWindow):
                     f"<div style='font-size:11pt;font-weight:700;color:{color};white-space:nowrap;'>{safe_text}</div>"
                 )
             self.TXTSTATUSLOG.setHtml("".join(html_lines))
+            scrollbar = self.TXTSTATUSLOG.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
             return
 
         for i, etiket in enumerate(self._log_etiketleri):
