@@ -281,7 +281,7 @@ class GorevPlaniEkrani(QDialog):
         super().__init__()
         uic.loadUi(os.path.join(UI_KLASOR, "planning.ui"), self)
         self.veri_sistemi = veri_sistemi
-        self.secili_txt_yolu = None
+        self.secili_waypoints_yolu = None
         self.tableWidget.setRowCount(0)
         self.pushButton_4.clicked.connect(self.close)
         self.pushButton.clicked.connect(self.dosya_sec)
@@ -292,22 +292,22 @@ class GorevPlaniEkrani(QDialog):
             self,
             "Open File",
             "",
-            "TXT (*.txt)",
+            "QGroundControl Waypoints (*.waypoints)",
         )
         if yol:
-            self.secili_txt_yolu = yol
+            self.secili_waypoints_yolu = yol
             self.pushButton.setText(os.path.basename(yol))
-            self.veri_sistemi.log_sinyali.emit(f"MISSION TXT SELECTED: {os.path.basename(yol)}")
+            self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS SELECTED: {os.path.basename(yol)}")
 
     def yukle(self):
-        if not self.secili_txt_yolu:
-            self.veri_sistemi.log_sinyali.emit("ERROR: Select a mission TXT file first.")
+        if not self.secili_waypoints_yolu:
+            self.veri_sistemi.log_sinyali.emit("ERROR: Select a mission .waypoints file first.")
             return
 
         try:
-            response = self.veri_sistemi.gorev_txt_yukle(self.secili_txt_yolu)
+            response = self.veri_sistemi.gorev_waypoints_yukle(self.secili_waypoints_yolu)
         except Exception as exc:
-            self.veri_sistemi.log_sinyali.emit(f"ERROR: Mission TXT upload failed: {exc}")
+            self.veri_sistemi.log_sinyali.emit(f"ERROR: Mission waypoints upload failed: {exc}")
             return
 
         waypoints = self._waypoints_from_response(response)
@@ -318,7 +318,7 @@ class GorevPlaniEkrani(QDialog):
         elif waypoints:
             self._tabloyu_doldur(waypoints)
             self.veri_sistemi.log_sinyali.emit(
-                "INFO: TXT parsed locally, but vehicle upload is not confirmed. Main map route is hidden."
+                "INFO: Waypoints parsed locally, but vehicle upload is not confirmed. Main map route is hidden."
             )
         else:
             self.tableWidget.setRowCount(0)
@@ -326,9 +326,9 @@ class GorevPlaniEkrani(QDialog):
 
         mission_id = response.get("mission_id") or response.get("mission_name") or "backend"
         if vehicle_confirmed:
-            self.veri_sistemi.log_sinyali.emit(f"MISSION TXT SYNCED TO VEHICLE: {mission_id}")
+            self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS SYNCED TO VEHICLE: {mission_id}")
         else:
-            self.veri_sistemi.log_sinyali.emit(f"MISSION TXT PARSED ONLY: {mission_id}")
+            self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS PARSED ONLY: {mission_id}")
 
     def _waypoints_from_response(self, response):
         raw_waypoints = (

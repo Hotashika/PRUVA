@@ -1044,8 +1044,11 @@ class NjordVeriSistemi(QObject):
         with self._lock:
             self._mission_messages.clear()
 
-    def _txt_waypointlerini_oku(self, txt_yolu):
-        text = Path(txt_yolu).read_text(encoding="utf-8", errors="replace")
+    def _waypoints_dosyasini_oku(self, waypoints_yolu):
+        waypoints_yolu = Path(waypoints_yolu)
+        if waypoints_yolu.suffix.lower() != ".waypoints":
+            raise ValueError("Mission file must have a .waypoints extension.")
+        text = waypoints_yolu.read_text(encoding="utf-8", errors="replace")
         waypoints = []
         qgc_wpl = False
         for line_no, line in enumerate(text.splitlines(), start=1):
@@ -1092,8 +1095,12 @@ class NjordVeriSistemi(QObject):
             )
 
         if not waypoints:
-            raise ValueError("No valid latitude/longitude waypoint found in TXT file.")
+            raise ValueError("No valid latitude/longitude waypoint found in .waypoints file.")
         return waypoints
+
+    def _txt_waypointlerini_oku(self, txt_yolu):
+        """Geriye dönük uyumluluk için eski okuyucu adı."""
+        return self._waypoints_dosyasini_oku(txt_yolu)
 
     def _qgc_wpl_satiri_oku(self, line, waypoint_index, line_no):
         parts = re.split(r"[\t,; ]+", line.strip())
@@ -1637,10 +1644,10 @@ class NjordVeriSistemi(QObject):
                 return
             time.sleep(0.03)
 
-    def gorev_txt_yukle(self, txt_yolu, mission_name=None):
-        txt_yolu = str(txt_yolu)
-        mission_name = mission_name or Path(txt_yolu).stem
-        local_waypoints = self._txt_waypointlerini_oku(txt_yolu)
+    def gorev_waypoints_yukle(self, waypoints_yolu, mission_name=None):
+        waypoints_yolu = str(waypoints_yolu)
+        mission_name = mission_name or Path(waypoints_yolu).stem
+        local_waypoints = self._waypoints_dosyasini_oku(waypoints_yolu)
         pixhawk_waypoints = None
 
         response = {
@@ -1648,7 +1655,7 @@ class NjordVeriSistemi(QObject):
             "success": True,
             "mission_id": mission_name,
             "mission_name": mission_name,
-            "message": "Mission TXT parsed locally.",
+            "message": "Mission waypoints parsed locally.",
             "waypoints": local_waypoints,
             "backend_used": False,
             "pixhawk_uploaded": False,
@@ -1658,7 +1665,7 @@ class NjordVeriSistemi(QObject):
 
         if self._mavlink_gorev_baglantisi_hazir_mi():
             try:
-                self._log("Uploading mission TXT directly to Pixhawk over MAVLink telemetry.")
+                self._log("Uploading mission waypoints directly to Pixhawk over MAVLink telemetry.")
                 self._mavlink_gorev_yukle(local_waypoints)
                 self._mission_uploaded_to_pixhawk = True
                 response["pixhawk_uploaded"] = True
@@ -1695,10 +1702,14 @@ class NjordVeriSistemi(QObject):
             self.gorev_noktalarini_guncelle([])
             self._set(
                 active_mission=None,
-                decision_log="Mission TXT parsed, but vehicle connection is not ready. Route is not displayed.",
+                decision_log="Mission waypoints parsed, but vehicle connection is not ready. Route is not displayed.",
             )
-            self._log("INFO: Mission TXT was parsed only. Vehicle/Pixhawk upload was not confirmed, so map route was not displayed.")
+            self._log("INFO: Mission waypoints were parsed only. Vehicle/Pixhawk upload was not confirmed, so map route was not displayed.")
         return response
+
+    def gorev_txt_yukle(self, txt_yolu, mission_name=None):
+        """Geriye dönük uyumluluk için eski yükleyici adı."""
+        return self.gorev_waypoints_yukle(txt_yolu, mission_name=mission_name)
 
     def acil_durum(self):
         self._acil_durum_mavlink()
