@@ -39,7 +39,6 @@ MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 15.0
 ARDUPILOT_FORCE_ARM_MAGIC = 21196
-MAV_CMD_NJORD_MISSION_START = mavutil.mavlink.MAV_CMD_USER_1
 
 JETSON_IP = None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
@@ -717,13 +716,7 @@ class NjordVeriSistemi(QObject):
             result = getattr(msg, "result", None)
             command_name = self._mavlink_command_name(command)
             result_name = self._mavlink_result_name(result)
-            if command == MAV_CMD_NJORD_MISSION_START and result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                self._log(
-                    f"COMMAND ACK: {command_name} -> {result_name} "
-                    "(Pixhawk ACK; Jetson mission command is also sent to companion/broadcast)"
-                )
-            else:
-                self._log(f"COMMAND ACK: {command_name} -> {result_name}")
+            self._log(f"COMMAND ACK: {command_name} -> {result_name}")
 
         elif msg_type == "STATUSTEXT":
             text = getattr(msg, "text", "")
@@ -754,6 +747,7 @@ class NjordVeriSistemi(QObject):
             "MISSION_REQUEST",
             "MISSION_REQUEST_INT",
             "MISSION_ACK",
+            "PARAM_VALUE",
         ):
             with self._lock:
                 self._mission_messages.append(msg)
@@ -1473,18 +1467,18 @@ class NjordVeriSistemi(QObject):
             self._log(f"ERROR: Unknown mission selection: {gorev_adi}")
             return
 
-        if not self._jetson_gorev_komutu_gonder(mission_number):
-            self._log(f"ERROR: Jetson mission command could not be sent: {gorev_adi}")
+        if not self._scr_user1_ayarla(mission_number):
+            self._log(f"ERROR: SCR_USER1 could not be confirmed for mission: {gorev_adi}")
             return
 
         self._set(
             active_mission=gorev_adi,
             decision_log=(
                 f"Mission selected: {gorev_adi}. Pixhawk mission is loaded. "
-                "Jetson mission command was sent over MAVLink."
+                f"SCR_USER1 was confirmed as {mission_number}."
             ),
         )
-        self._log(f"MISSION COMMAND SENT TO JETSON: {gorev_adi}")
+        self._log(f"MISSION SELECTED VIA SCR_USER1: {gorev_adi}")
 
     def _gorev_numarasi(self, gorev_adi):
         text = str(gorev_adi or "").strip().upper()
@@ -1498,47 +1492,51 @@ class NjordVeriSistemi(QObject):
             return number
         return None
 
-    def _jetson_gorev_komutu_gonder(self, mission_number):
+    def _scr_user1_ayarla(self, mission_number, timeout=4.0):
         if not self.connection:
             return False
 
-        target_system, _target_component = self._mavlink_hedefleri(component_zero=False)
-        companion_component = getattr(
-            mavutil.mavlink,
-            "MAV_COMP_ID_ONBOARD_COMPUTER",
-            191,
-        )
-        target_components = (companion_component, 0)
-        sent_any = False
+        target_system, target_component = self._mavlink_hedefleri(component_zero=False)
+        param_id = b"SCR_USER1"
+        expected = float(mission_number)
+        self._mission_kuyrugunu_temizle()
 
-        for target_component in target_components:
-            try:
-                self.connection.mav.command_long_send(
-                    target_system,
-                    target_component,
-                    MAV_CMD_NJORD_MISSION_START,
-                    0,
-                    float(mission_number),
-                    1.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-                sent_any = True
-                self._log(
-                    f"MAVLink USER_1 mission command sent for Jetson: "
-                    f"M{mission_number}, target_component={target_component}"
-                )
-                time.sleep(0.05)
-            except Exception as exc:
-                self._log(
-                    f"WARNING: MAVLink Jetson mission command failed for "
-                    f"target_component={target_component}: {exc}"
-                )
+        try:
+            self.connection.mav.param_set_send(
+                target_system,
+                target_component,
+                param_id,
+                expected,
+                mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+            )
+            self._log(f"MAVLink PARAM_SET sent: SCR_USER1={expected:.0f}")
+        except Exception as exc:
+            self._log(f"ERROR: SCR_USER1 PARAM_SET failed: {exc}")
+            return False
 
-        return sent_any
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            msg = self._mission_mesaji_bekle(("PARAM_VALUE",), timeout=0.5)
+            if msg is None:
+                continue
+            received_id = getattr(msg, "param_id", "")
+            if isinstance(received_id, bytes):
+                received_id = received_id.decode(errors="replace")
+            received_id = str(received_id).strip("\x00").strip()
+            if received_id != "SCR_USER1":
+                continue
+            received_value = float(getattr(msg, "param_value", float("nan")))
+            if abs(received_value - expected) <= 0.001:
+                self._log(f"SUCCESS: SCR_USER1 confirmed as {received_value:.0f}")
+                return True
+            self._log(
+                f"ERROR: SCR_USER1 verification mismatch: "
+                f"expected {expected:.0f}, got {received_value}"
+            )
+            return False
+
+        self._log("ERROR: SCR_USER1 PARAM_VALUE confirmation timed out.")
+        return False
 
     def _mission_start_gonder(self):
         if not self.connection:
