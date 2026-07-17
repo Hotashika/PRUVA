@@ -220,29 +220,43 @@ class NjordVeriSistemi(QObject):
     def get_ip_from_mac(self, target_mac):
         return self._arp_cache_ip(target_mac)
 
+    @staticmethod
+    def _ipv4_from_text(text):
+        return re.findall(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", text or "")
+
+    @staticmethod
+    def _normalize_mac(value):
+        return str(value or "").lower().replace("-", ":")
+
     def _arp_cache_ip(self, target_mac):
-        normalized_mac = target_mac.lower().replace("-", ":")
+        normalized_mac = self._normalize_mac(target_mac)
 
-        result = self._command_output(["arp", "-a"])
-        if result is None:
-            return None
+        outputs = []
+        for command in (["arp", "-a"], ["ip", "neigh"], ["ip", "neighbor"], ["netsh", "interface", "ip", "show", "neighbors"]):
+            result = self._command_output(command)
+            if result:
+                outputs.append(result)
 
-        for line in result.splitlines():
-            normalized_line = line.lower().replace("-", ":")
-            if normalized_mac in normalized_line:
-                ip_match = re.search(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", line)
-                if ip_match:
-                    return ip_match.group()
+        for output in outputs:
+            for line in output.splitlines():
+                normalized_line = self._normalize_mac(line)
+                if normalized_mac in normalized_line:
+                    ips = self._ipv4_from_text(line)
+                    if ips:
+                        return ips[0]
         return None
 
     def _local_ipv4_networks(self):
-        result = self._command_output(["ipconfig"])
-        if result is None:
-            return []
+        system = platform.system().lower()
+        if system == "windows":
+            return self._local_ipv4_networks_windows()
+        return self._local_ipv4_networks_posix()
 
+    def _local_ipv4_networks_windows(self):
+        result = self._command_output(["ipconfig"])
         networks = []
         current_ip = None
-        for line in result.splitlines():
+        for line in (result or "").splitlines():
             ipv4_match = re.search(r"IPv4.*?:\s*([0-9.]+)", line, re.IGNORECASE)
             mask_match = None
             if "mask" in line.lower() or "maske" in line.lower():
@@ -269,6 +283,44 @@ class NjordVeriSistemi(QObject):
                 pass
 
         return networks
+
+    def _local_ipv4_networks_posix(self):
+        networks = []
+        ip_output = self._command_output(["ip", "-4", "addr", "show"])
+        if ip_output:
+            for match in re.finditer(r"\binet\s+([0-9.]+/\d+)", ip_output):
+                try:
+                    network = ipaddress.IPv4Network(match.group(1), strict=False)
+                    if not network.is_loopback:
+                        networks.append(network)
+                except Exception:
+                    pass
+
+        if not networks:
+            ifconfig_output = self._command_output(["ifconfig"])
+            for match in re.finditer(
+                r"inet\s+(?:addr:)?([0-9.]+).*?(?:netmask\s+(0x[0-9a-fA-F]+|[0-9.]+))?",
+                ifconfig_output or "",
+            ):
+                ip = match.group(1)
+                mask = match.group(2) or "255.255.255.0"
+                if mask.startswith("0x"):
+                    mask_int = int(mask, 16)
+                    mask = ".".join(str((mask_int >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+                try:
+                    network = ipaddress.IPv4Network(f"{ip}/{mask}", strict=False)
+                    if not network.is_loopback:
+                        networks.append(network)
+                except Exception:
+                    pass
+
+        unique = []
+        seen = set()
+        for network in networks:
+            if network not in seen:
+                unique.append(network)
+                seen.add(network)
+        return unique
 
     def _scan_network_for_mac(self, target_mac):
         networks = self._local_ipv4_networks()

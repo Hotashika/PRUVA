@@ -1,5 +1,6 @@
 import subprocess
 import time
+import re
 
 import cv2
 from PyQt5.QtGui import QImage
@@ -9,16 +10,24 @@ PORT = 5000
 
 
 def get_ip_by_mac(target_mac: str) -> str | None:
-    try:
-        result = subprocess.run(["arp", "-a"], capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        return None
-    for line in result.stdout.splitlines():
-        normalized_line = line.lower().replace("-", ":")
-        if target_mac in normalized_line:
-            for part in line.split():
-                if part.count(".") == 3:
-                    return part
+    normalized_mac = target_mac.lower().replace("-", ":")
+    commands = (
+        ["arp", "-a"],
+        ["ip", "neigh"],
+        ["ip", "neighbor"],
+        ["netsh", "interface", "ip", "show", "neighbors"],
+    )
+    for command in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            continue
+        for line in result.stdout.splitlines():
+            normalized_line = line.lower().replace("-", ":")
+            if normalized_mac in normalized_line:
+                ip_match = re.search(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", line)
+                if ip_match:
+                    return ip_match.group()
 
     return None
 
