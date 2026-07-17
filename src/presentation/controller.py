@@ -43,6 +43,13 @@ MAP_CALIBRATION_POINTS = [
     {"name": "WP6", "lat": 37.9516681, "lon": 32.5006807, "pixel": (194, 374)},
 ]
 DEFAULT_BATTERY_CAPACITY_WH = 0.0
+BATTERY_EMPTY_VOLTAGE = 21.0
+BATTERY_FULL_VOLTAGE = 25.2
+
+
+def _pil_yuzdesi_voltajdan(voltage):
+    percent = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100.0
+    return max(0, min(int(round(percent)), 100))
 
 
 def _patch_pyqt5_uic_enums():
@@ -1405,9 +1412,8 @@ class NjordAnaEkran(QMainWindow):
 
     def _batarya_guncelle(self, d):
         battery = d.get("battery", {})
-        percent = int(d.get("pil_yuzde", battery.get("percentage", 0)) or 0)
-        percent = max(0, min(percent, 100))
         voltage = float(d.get("voltaj", battery.get("total_voltage", 0.0)) or 0.0)
+        percent = _pil_yuzdesi_voltajdan(voltage)
         current = float(d.get("akim", battery.get("current", 0.0)) or 0.0)
         cells = battery.get("cell_voltages", d.get("cell_voltages", [])) or []
         power_w = float(battery.get("power_w", d.get("power_w", voltage * current)) or 0.0)
