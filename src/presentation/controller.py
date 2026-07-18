@@ -18,7 +18,7 @@ PROJE_KLASORU = os.path.dirname(PAKET_KLASORU)
 KAYNAK_KLASORU = os.path.join(PROJE_KLASORU, "assets")
 UI_KLASOR = os.path.join(KAYNAK_KLASORU, "ui")
 GORSEL_KLASORU = os.path.join(KAYNAK_KLASORU, "images")
-WAYPOINT_KLASORU = os.path.join(PROJE_KLASORU, "missions", "waypoints")
+WAYPOINT_KLASORU = os.path.join(PROJE_KLASORU, "waypoints", "waypoints")
 
 ALIGN_CENTER = getattr(getattr(Qt, "AlignmentFlag", None), "AlignCenter", None)
 if ALIGN_CENTER is None:
