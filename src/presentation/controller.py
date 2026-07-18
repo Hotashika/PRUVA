@@ -147,6 +147,7 @@ class PortEkrani(QDialog):
             self.comboBox_2.currentText(),
             self.lineEdit.text(),
         )
+        self.accept()
 
 
 class HaritaCizimKatmani(QtWidgets.QWidget):
