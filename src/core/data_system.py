@@ -39,12 +39,20 @@ MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 15.0
 ARDUPILOT_FORCE_ARM_MAGIC = 21196
+BATTERY_EMPTY_VOLTAGE = 21.0
+BATTERY_FULL_VOLTAGE = 25.2
+BATTERY_CAPACITY_WH = 10000.0
 
 JETSON_IP = None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
 JETSON_VIDEO_PORT = 5000
 JETSON_BACKEND_PORT = 8000
 NETWORK_SCAN_INTERVAL = 30.0
+
+
+def _pil_yuzdesi_voltajdan(voltage):
+    percent = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100.0
+    return max(0, min(int(round(percent)), 100))
 
 
 
@@ -114,11 +122,9 @@ class NjordVeriSistemi(QObject):
             "jetson_ip": "Searching...",
             "battery": {
                 "total_voltage": 0.0,
-                "current": 0.0,
                 "percentage": 0,
-                "power_w": 0.0,
                 "remaining_wh": 0.0,
-                "capacity_wh": 0.0,
+                "capacity_wh": BATTERY_CAPACITY_WH,
             },
         }
 
@@ -167,11 +173,9 @@ class NjordVeriSistemi(QObject):
 
         defaults = {
             "total_voltage": 0.0,
-            "current": 0.0,
             "percentage": 0,
-            "power_w": 0.0,
             "remaining_wh": 0.0,
-            "capacity_wh": 0.0,
+            "capacity_wh": BATTERY_CAPACITY_WH,
         }
         for key, value in defaults.items():
             battery.setdefault(key, value)
@@ -217,9 +221,7 @@ class NjordVeriSistemi(QObject):
 
         battery = kopya.get("battery") or {}
         kopya["voltaj"] = battery.get("total_voltage", 0.0)
-        kopya["akim"] = battery.get("current", 0.0)
         kopya["pil_yuzde"] = battery.get("percentage", 0)
-        kopya["power_w"] = battery.get("power_w", 0.0)
         kopya["remaining_wh"] = battery.get("remaining_wh", 0.0)
         kopya["capacity_wh"] = battery.get("capacity_wh", 0.0)
         self.veri_guncelle.emit(kopya)
@@ -822,14 +824,15 @@ class NjordVeriSistemi(QObject):
             with self._lock:
                 battery = self._battery_state()
                 voltage = msg.voltage_battery / 1000.0
-                current = msg.current_battery / 100.0
                 battery["total_voltage"] = voltage
-                battery["current"] = current
-                battery["percentage"] = msg.battery_remaining
-                battery["power_w"] = voltage * current
-                capacity_wh = float(battery.get("capacity_wh", 0.0) or 0.0)
-                if capacity_wh > 0:
-                    battery["remaining_wh"] = capacity_wh * max(0, min(msg.battery_remaining, 100)) / 100.0
+                try:
+                    percent = int(getattr(msg, "battery_remaining", -1))
+                except (TypeError, ValueError):
+                    percent = -1
+                if percent < 0 or percent > 100:
+                    percent = _pil_yuzdesi_voltajdan(voltage)
+                battery["percentage"] = percent
+                battery["remaining_wh"] = BATTERY_CAPACITY_WH * percent / 100.0
             self._emit_durum()
 
         elif msg_type == "COMMAND_ACK":

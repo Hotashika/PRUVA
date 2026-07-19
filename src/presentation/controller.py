@@ -43,7 +43,7 @@ MAP_CALIBRATION_POINTS = [
     {"name": "WP5", "lat": 37.9510589, "lon": 32.5006807, "pixel": (190, 694)},
     {"name": "WP6", "lat": 37.9516681, "lon": 32.5006807, "pixel": (194, 374)},
 ]
-DEFAULT_BATTERY_CAPACITY_WH = 0.0
+DEFAULT_BATTERY_CAPACITY_WH = 10000.0
 BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
 
@@ -631,15 +631,8 @@ class NjordAnaEkran(QMainWindow):
             "label_7": "LCAMERA",
             "textEdit": "TXTCOLREG",
             "progressBar": "BATTERBAR",
-            "lcdNumber": "LCDCURRENT",
             "lcdNumber_2": "LCDVOLT",
             "lcdNumber_3": "LCDSPEED",
-            "label": "LC1",
-            "label_13": "LC2",
-            "label_14": "LC3",
-            "label_15": "LC4",
-            "label_16": "LC5",
-            "label_17": "LC6",
             "label_2": "LLOG1",
             "label_3": "LLOG2",
             "label_9": "LLOG3",
@@ -686,6 +679,7 @@ class NjordAnaEkran(QMainWindow):
         view.setBackgroundBrush(QBrush(QColor(240, 246, 250)))
 
         self.setCentralWidget(view)
+        self._olcekli_arayuz_icerik = icerik
         self._olcekli_arayuz_view = view
         self._olcekli_arayuz_scene = scene
         self._olcekli_arayuz_proxy = proxy
@@ -705,6 +699,35 @@ class NjordAnaEkran(QMainWindow):
         view.resetTransform()
         view.scale(olcek, olcek)
         view.centerOn(genislik / 2, yukseklik / 2)
+        QtCore.QTimer.singleShot(0, self._mission_yuksekligini_decision_hizasina_ayarla)
+
+    def _mission_yuksekligini_decision_hizasina_ayarla(self):
+        if not all(hasattr(self, ad) for ad in ("groupBox_6", "groupBox_7", "groupBox_8")):
+            return
+
+        icerik = getattr(self, "_olcekli_arayuz_icerik", None)
+        if icerik is None:
+            return
+
+        mission_top = self.groupBox_6.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        decision_top = self.groupBox_8.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        decision_bottom = decision_top + self.groupBox_8.height()
+        hedef_yukseklik = decision_bottom - mission_top
+        if hedef_yukseklik <= 0:
+            return
+
+        hedef_yukseklik = max(360, min(int(hedef_yukseklik), 560))
+        if abs(self.groupBox_6.height() - hedef_yukseklik) <= 2:
+            return
+
+        self.groupBox_6.setMinimumHeight(hedef_yukseklik)
+        self.groupBox_6.setMaximumHeight(hedef_yukseklik)
+        self.groupBox_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        secim_yuksekligi = max(220, hedef_yukseklik - 175)
+        self.groupBox_7.setMinimumHeight(secim_yuksekligi)
+        self.groupBox_7.setMaximumHeight(secim_yuksekligi)
+        self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def _kompakt_duzen_gerekli_mi(self):
         screen = QtWidgets.QApplication.primaryScreen()
@@ -730,7 +753,7 @@ class NjordAnaEkran(QMainWindow):
         kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
         for buton in (getattr(self, "pushButton", None), getattr(self, "pushButton_2", None)):
             if buton is not None:
-                buton.setMinimumHeight(38 if kompakt else 48)
+                buton.setMinimumHeight(34 if kompakt else 42)
 
         for buton in (
             getattr(self, "pushButton_6", None),
@@ -742,10 +765,10 @@ class NjordAnaEkran(QMainWindow):
 
         for widget, maximum in (
             (getattr(self, "groupBox_7", None), 16777215 if kompakt else 205),
-            (getattr(self, "groupBox_6", None), 16777215 if kompakt else 380),
+            (getattr(self, "groupBox_6", None), 220 if kompakt else 250),
             (getattr(self, "groupBox", None), 16777215 if kompakt else 360),
             (getattr(self, "groupBox_2", None), 16777215 if kompakt else 360),
-            (getattr(self, "groupBox_3", None), 16777215 if kompakt else 500),
+            (getattr(self, "groupBox_3", None), 205 if kompakt else 235),
             (getattr(self, "groupBox_bottom", None), 16777215 if kompakt else 150),
         ):
             if widget is not None:
@@ -756,9 +779,9 @@ class NjordAnaEkran(QMainWindow):
         for widget, width in (
             (getattr(self, "topVisualPanel", None), 230 if kompakt else 520),
             (getattr(self, "bottomInfoPanel", None), 570 if kompakt else 680),
-            (getattr(self, "leftPanel", None), 175 if kompakt else 330),
-            (getattr(self, "middlePanel", None), 175 if kompakt else 330),
-            (getattr(self, "rightPanel", None), 205 if kompakt else 430),
+            (getattr(self, "leftPanel", None), 160 if kompakt else 260),
+            (getattr(self, "middlePanel", None), 160 if kompakt else 260),
+            (getattr(self, "rightPanel", None), 220 if kompakt else 360),
         ):
             if widget is not None:
                 widget.setMinimumWidth(width)
@@ -1001,72 +1024,42 @@ class NjordAnaEkran(QMainWindow):
         layout.setHorizontalSpacing(6 if kompakt else 8)
         layout.setVerticalSpacing(4 if kompakt else 8)
 
-        cell_widgets = [
-            getattr(self, "label", None),
-            getattr(self, "label_13", None),
-            getattr(self, "label_14", None),
-            getattr(self, "label_15", None),
-            getattr(self, "label_16", None),
-            getattr(self, "label_17", None),
-        ]
-        for widget in cell_widgets:
-            if widget is not None:
-                widget.setMinimumHeight(18 if kompakt else 24)
-                widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-                widget.setWordWrap(False)
-
         if hasattr(self, "progressBar"):
+            self.progressBar.show()
+            self.progressBar.setMinimumHeight(30 if kompakt else 34)
             layout.addWidget(self.progressBar, 0, 0, 1, 2)
 
-        if kompakt:
-            for index, widget in enumerate((w for w in cell_widgets if w is not None)):
-                layout.addWidget(widget, 1 + index % 3, index // 3, 1, 1)
-        else:
-            for row, widget in enumerate((w for w in cell_widgets if w is not None), start=1):
-                layout.addWidget(widget, row, 0, 1, 2)
-
-        total_current_label = getattr(self, "label_18", None)
         total_voltage_label = getattr(self, "label_20", None)
-        current_lcd = getattr(self, "lcdNumber", None)
         voltage_lcd = getattr(self, "lcdNumber_2", None)
-
-        current_row = 4 if kompakt else 7
-        if total_current_label is not None:
-            layout.addWidget(total_current_label, current_row, 0, 1, 1 if kompakt else 2)
-            total_current_label.setMinimumHeight(18 if kompakt else 24)
-            total_current_label.setWordWrap(False)
-        if current_lcd is not None:
-            layout.addWidget(current_lcd, current_row + 1, 0, 1, 1 if kompakt else 2)
-            current_lcd.setMinimumHeight(34 if kompakt else 46)
-            current_lcd.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-
         if total_voltage_label is not None:
-            layout.addWidget(total_voltage_label, current_row if kompakt else current_row + 2, 1 if kompakt else 0, 1, 1 if kompakt else 2)
-            total_voltage_label.setMinimumHeight(18 if kompakt else 24)
+            total_voltage_label.show()
+            total_voltage_label.setText("TOTAL VOLTAGE")
+            total_voltage_label.setMinimumHeight(22 if kompakt else 26)
             total_voltage_label.setWordWrap(False)
+            layout.addWidget(total_voltage_label, 1, 0, 1, 2)
         if voltage_lcd is not None:
-            layout.addWidget(voltage_lcd, current_row + 1 if kompakt else current_row + 3, 1 if kompakt else 0, 1, 1 if kompakt else 2)
-            voltage_lcd.setMinimumHeight(34 if kompakt else 46)
+            voltage_lcd.show()
+            voltage_lcd.setMinimumHeight(38 if kompakt else 46)
             voltage_lcd.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            layout.addWidget(voltage_lcd, 2, 0, 1, 2)
 
-        if not hasattr(self, "LBATTERYPOWER"):
-            self.LBATTERYPOWER = QtWidgets.QLabel("POWER: 0.0 W", self.groupBox_3)
         if not hasattr(self, "LBATTERYWH"):
             self.LBATTERYWH = QtWidgets.QLabel("ENERGY LEFT: 0.0 Wh", self.groupBox_3)
 
         energy_style = "font-size: 12pt; font-weight: bold; color: #0b2239;"
-        for widget in (self.LBATTERYPOWER, self.LBATTERYWH):
-            widget.setStyleSheet(energy_style)
-            widget.setMinimumHeight(20 if kompakt else 26)
-            widget.setWordWrap(False)
-            widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-
-        energy_row = current_row + 2 if kompakt else current_row + 4
-        layout.addWidget(self.LBATTERYPOWER, energy_row, 0, 1, 2)
-        layout.addWidget(self.LBATTERYWH, energy_row + 1, 0, 1, 2)
+        self.LBATTERYWH.show()
+        self.LBATTERYWH.setStyleSheet(energy_style)
+        self.LBATTERYWH.setMinimumHeight(28 if kompakt else 34)
+        self.LBATTERYWH.setWordWrap(False)
+        self.LBATTERYWH.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        layout.addWidget(self.LBATTERYWH, 3, 0, 1, 2)
+        for row in range(4):
+            layout.setRowStretch(row, 0)
 
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
+        self.groupBox_3.setMaximumHeight(205 if kompakt else 235)
+        self.groupBox_3.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
     def _layout_ogelerini_temizle(self, layout):
         while layout.count():
@@ -1196,15 +1189,18 @@ class NjordAnaEkran(QMainWindow):
         layout = self.groupBox_7.layout()
         self._layout_ogelerini_temizle(layout)
         kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
-        layout.setContentsMargins(8 if kompakt else 14, 18 if kompakt else 20, 8 if kompakt else 14, 8 if kompakt else 14)
+        layout.setContentsMargins(10 if kompakt else 14, 18 if kompakt else 20, 10 if kompakt else 14, 10 if kompakt else 14)
         layout.setSpacing(6 if kompakt else 8)
         if isinstance(layout, QtWidgets.QBoxLayout):
-            layout.setDirection(QtWidgets.QBoxLayout.LeftToRight if kompakt else QtWidgets.QBoxLayout.TopToBottom)
+            layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
 
         for radio in (self.radioButton, self.radioButton_2, self.radioButton_3, self.radioButton_4):
             layout.addWidget(radio)
             radio.setMinimumHeight(26 if kompakt else 34)
             radio.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.groupBox_7.setMinimumHeight(245 if kompakt else 285)
+        self.groupBox_7.setMaximumHeight(245 if kompakt else 285)
+        self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def _yeni_ui_layout_duzelt(self):
         if hasattr(self, "topVisualPanel") and hasattr(self, "bottomInfoPanel"):
@@ -1231,16 +1227,24 @@ class NjordAnaEkran(QMainWindow):
         if hasattr(self, "leftPanel") and hasattr(self, "middlePanel") and hasattr(self, "rightPanel"):
             panel_layout = getattr(self, "horizontalLayout", None)
             if panel_layout is not None:
-                panel_layout.setStretch(0, 30)
-                panel_layout.setStretch(1, 30)
-                panel_layout.setStretch(2, 40)
-                panel_layout.setStretchFactor(self.leftPanel, 30)
-                panel_layout.setStretchFactor(self.middlePanel, 30)
-                panel_layout.setStretchFactor(self.rightPanel, 40)
+                panel_layout.setContentsMargins(0, 0, 0, 0)
+                panel_layout.setSpacing(8)
+                panel_layout.setStretch(0, 27)
+                panel_layout.setStretch(1, 27)
+                panel_layout.setStretch(2, 46)
+                panel_layout.setStretchFactor(self.leftPanel, 27)
+                panel_layout.setStretchFactor(self.middlePanel, 27)
+                panel_layout.setStretchFactor(self.rightPanel, 46)
 
-            self.leftPanel.setMinimumWidth(330)
-            self.middlePanel.setMinimumWidth(330)
-            self.rightPanel.setMinimumWidth(430)
+            self.leftPanel.setMinimumWidth(260)
+            self.middlePanel.setMinimumWidth(260)
+            self.rightPanel.setMinimumWidth(360)
+            for panel in (self.leftPanel, self.middlePanel, self.rightPanel):
+                panel_layout_inner = panel.layout()
+                if isinstance(panel_layout_inner, QtWidgets.QBoxLayout):
+                    panel_layout_inner.setAlignment(Qt.AlignTop)
+                    panel_layout_inner.setContentsMargins(0, 0, 0, 0)
+                    panel_layout_inner.setSpacing(8)
             for panel in (self.leftPanel, self.middlePanel, self.rightPanel):
                 panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         elif hasattr(self, "leftPanel") and hasattr(self, "rightPanel"):
@@ -1425,20 +1429,8 @@ class NjordAnaEkran(QMainWindow):
             if widget is not None:
                 widget.setStyleSheet(map_status_stili)
 
-        self._cell_etiketleri = [
-            self.label,
-            self.label_13,
-            self.label_14,
-            self.label_15,
-            self.label_16,
-            self.label_17,
-        ]
-        for index, etiket in enumerate(self._cell_etiketleri, start=1):
-            etiket.setText(f"CELL {index}: 0.00 V")
-            etiket.setStyleSheet("font-size: 12pt; font-weight: bold; color: #0b2239;")
-
-        for etiket in (self.label_18, self.label_20):
-            etiket.setStyleSheet("font-size: 11pt; font-weight: bold; color: #0b2239;")
+        if hasattr(self, "label_20"):
+            self.label_20.setStyleSheet("font-size: 11pt; font-weight: bold; color: #0b2239;")
 
         self.textEdit.setPlainText(
             "Active COLREG rule: --\n\n"
@@ -1520,12 +1512,17 @@ class NjordAnaEkran(QMainWindow):
         ):
             buton.setStyleSheet(self._veri_gostergesi_stili)
 
-        for lcd in (self.lcdNumber, self.lcdNumber_2, self.lcdNumber_3):
-            lcd.setStyleSheet(self._lcd_stili)
+        for lcd in (
+            getattr(self, "lcdNumber_2", None),
+            getattr(self, "lcdNumber_3", None),
+        ):
+            if lcd is not None:
+                lcd.setStyleSheet(self._lcd_stili)
 
-        for buton in (self.pushButton, self.pushButton_2):
-            buton.setMinimumHeight(38 if kompakt else 48)
-            buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.pushButton.setMinimumHeight(38 if kompakt else 48)
+        self.pushButton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.pushButton_2.setMinimumHeight(34 if kompakt else 42)
+        self.pushButton_2.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         self.textEdit.setStyleSheet(
             "QTextEdit { font-size: 11pt; font-weight: bold; color: #0b2239; "
@@ -1542,8 +1539,9 @@ class NjordAnaEkran(QMainWindow):
         self.comboBox_2.setStyleSheet(self._mode_combo_stili)
 
         if hasattr(self, "groupBox_7"):
-            self.groupBox_7.setMaximumHeight(90 if kompakt else 205)
-            self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+            self.groupBox_7.setMinimumHeight(245 if kompakt else 285)
+            self.groupBox_7.setMaximumHeight(245 if kompakt else 285)
+            self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
         radio_stili = (
             "QRadioButton { font-size: 12pt; font-weight: bold; color: #0b2239; "
@@ -1555,12 +1553,12 @@ class NjordAnaEkran(QMainWindow):
             "border-radius: 10px; background-color: #3498db; }"
         )
         for radio in (self.radioButton, self.radioButton_2, self.radioButton_3, self.radioButton_4):
-            radio.setMinimumHeight(26 if kompakt else 36)
+            radio.setMinimumHeight(26 if kompakt else 34)
             radio.setStyleSheet(radio_stili)
             radio.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         if hasattr(self, "groupBox_6"):
-            self.groupBox_6.setMaximumHeight(380)
+            self.groupBox_6.setMaximumHeight(445 if kompakt else 485)
             self.groupBox_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
         if hasattr(self, "groupBox"):
@@ -1572,19 +1570,37 @@ class NjordAnaEkran(QMainWindow):
             self.groupBox_2.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
         if hasattr(self, "groupBox_3"):
-            self.groupBox_3.setMaximumHeight(500)
+            self.groupBox_3.setMaximumHeight(205 if kompakt else 235)
             self.groupBox_3.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
         if hasattr(self, "middlePanel") and self.middlePanel.layout() is not None:
             orta_layout = self.middlePanel.layout()
+            for panel in (
+                getattr(self, "leftPanel", None),
+                getattr(self, "middlePanel", None),
+                getattr(self, "rightPanel", None),
+            ):
+                panel_layout_inner = panel.layout() if panel is not None else None
+                if isinstance(panel_layout_inner, QtWidgets.QBoxLayout):
+                    panel_layout_inner.setAlignment(Qt.AlignTop)
+                    panel_layout_inner.setContentsMargins(0, 0, 0, 0)
+                    panel_layout_inner.setSpacing(8)
+            if hasattr(self, "groupBox_3"):
+                orta_layout.setStretchFactor(self.groupBox_3, 0)
             if hasattr(self, "groupBox_6"):
                 orta_layout.setStretchFactor(self.groupBox_6, 0)
+                self.groupBox_6.setMaximumHeight(445 if kompakt else 485)
+                self.groupBox_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
             if hasattr(self, "pushButton_wifi"):
                 orta_layout.setStretchFactor(self.pushButton_wifi, 0)
             if hasattr(self, "pushButton_7"):
                 orta_layout.setStretchFactor(self.pushButton_7, 0)
 
-        for buton in (self.pushButton_6, self.pushButton_wifi, self.pushButton_7):
+        self.pushButton_6.setMinimumHeight(40 if kompakt else 50)
+        self.pushButton_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.pushButton_2.setMaximumWidth(16777215)
+        self.pushButton_6.setMaximumWidth(16777215)
+        for buton in (self.pushButton_wifi, self.pushButton_7):
             buton.setMinimumHeight(40 if kompakt else 58)
             buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
@@ -1706,34 +1722,21 @@ class NjordAnaEkran(QMainWindow):
     def _batarya_guncelle(self, d):
         battery = d.get("battery", {})
         voltage = float(d.get("voltaj", battery.get("total_voltage", 0.0)) or 0.0)
-        percent = _pil_yuzdesi_voltajdan(voltage)
-        current = float(d.get("akim", battery.get("current", 0.0)) or 0.0)
-        cells = battery.get("cell_voltages", d.get("cell_voltages", [])) or []
-        power_w = float(battery.get("power_w", d.get("power_w", voltage * current)) or 0.0)
-        remaining_wh = battery.get("remaining_wh", d.get("remaining_wh", battery.get("energy_wh")))
-        if remaining_wh is None:
-            capacity_wh = float(battery.get("capacity_wh", d.get("capacity_wh", DEFAULT_BATTERY_CAPACITY_WH)) or 0.0)
-            remaining_wh = capacity_wh * percent / 100.0
+        percent_raw = d.get("pil_yuzde", battery.get("percentage"))
         try:
-            remaining_wh = float(remaining_wh)
+            percent = int(round(float(percent_raw)))
         except (TypeError, ValueError):
-            remaining_wh = 0.0
+            percent = _pil_yuzdesi_voltajdan(voltage)
+        if percent < 0 or percent > 100:
+            percent = _pil_yuzdesi_voltajdan(voltage)
+        percent = max(0, min(percent, 100))
+        remaining_wh = DEFAULT_BATTERY_CAPACITY_WH * percent / 100.0
 
         self.progressBar.setValue(percent)
-        self.lcdNumber.display(current)
-        self.lcdNumber_2.display(voltage)
-        if hasattr(self, "LBATTERYPOWER"):
-            self.LBATTERYPOWER.setText(f"POWER: {power_w:.1f} W")
+        if hasattr(self, "lcdNumber_2"):
+            self.lcdNumber_2.display(voltage)
         if hasattr(self, "LBATTERYWH"):
             self.LBATTERYWH.setText(f"ENERGY LEFT: {remaining_wh:.1f} Wh")
-
-        for index, etiket in enumerate(self._cell_etiketleri):
-            value = cells[index] if index < len(cells) else 0.0
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                value = 0.0
-            etiket.setText(f"CELL {index + 1}: {value:.2f} V")
 
     def _arac_bagli_mi(self, d):
         return bool(
