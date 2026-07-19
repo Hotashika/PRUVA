@@ -133,6 +133,32 @@ class NjordVeriSistemi(QObject):
         with self._lock:
             return copy.deepcopy(self._durum)
 
+    def _telemetri_saglikli_mi(self):
+        with self._lock:
+            baglanti = bool(self._durum.get("baglanti"))
+            heartbeat_seen = bool(self._durum.get("heartbeat_seen"))
+            telemetry_lost = bool(self._durum.get("telemetry_lost"))
+            son_hb = self._last_hb
+
+        if not baglanti or not heartbeat_seen or telemetry_lost or son_hb <= 0:
+            return False
+        return time.time() - son_hb <= HEARTBEAT_TIMEOUT
+
+    def _telemetri_degerlerini_sifirla(self):
+        self._last_position_for_cog = None
+        return {
+            "hiz": 0.0,
+            "yaw": 0.0,
+            "cog": 0.0,
+            "roll": 0.0,
+            "pitch": 0.0,
+            "lat": 0.0,
+            "lon": 0.0,
+            "gps": 0,
+            "gps_uydu": 0,
+            "mesafe": 0.0,
+        }
+
     def _battery_state(self):
         battery = self._durum.get("battery")
         if not isinstance(battery, dict):
@@ -461,6 +487,7 @@ class NjordVeriSistemi(QObject):
             self._heartbeat_seen = False
             self._telemetry_lost_reported = False
             self._streams_requested = False
+            self._mission_uploaded_to_pixhawk = False
 
             Thread(target=self._dinleme_dongusu, daemon=True, name="MAVLink").start()
             if not self._watchdog_started:
@@ -468,20 +495,34 @@ class NjordVeriSistemi(QObject):
                 Thread(target=self._guvenlik_dongusu, daemon=True, name="Watchdog").start()
 
             self._set(
+                **self._telemetri_degerlerini_sifirla(),
                 baglanti=True,
                 link_ok=False,
                 heartbeat_seen=False,
                 telemetry_lost=False,
+                active_mission=None,
+                arm_change_pending=False,
+                mode_change_pending=False,
+                requested_mode=-1,
                 decision_log="Connection established. Waiting for heartbeat...",
             )
             self._log("Telemetry connection started.")
             self._kamera_baslat()
 
         except Exception as exc:
+            self._mission_uploaded_to_pixhawk = False
             self._log(f"CONNECTION ERROR: {exc}")
             self._set(
+                **self._telemetri_degerlerini_sifirla(),
                 baglanti=False,
                 link_ok=False,
+                heartbeat_seen=False,
+                telemetry_lost=True,
+                armed=False,
+                active_mission=None,
+                arm_change_pending=False,
+                mode_change_pending=False,
+                requested_mode=-1,
                 decision_log=f"CONNECTION ERROR: {exc}",
             )
 
@@ -490,6 +531,7 @@ class NjordVeriSistemi(QObject):
         self._camera_running = False
         self._camera_started = False
         self._watchdog_started = False
+        self._mission_uploaded_to_pixhawk = False
 
         if self.connection:
             try:
@@ -499,6 +541,7 @@ class NjordVeriSistemi(QObject):
         self.connection = None
 
         self._set(
+            **self._telemetri_degerlerini_sifirla(),
             baglanti=False,
             link_ok=False,
             heartbeat_seen=False,
@@ -506,6 +549,10 @@ class NjordVeriSistemi(QObject):
             mod="UNKNOWN",
             mod_id=-1,
             armed=False,
+            active_mission=None,
+            arm_change_pending=False,
+            mode_change_pending=False,
+            requested_mode=-1,
             decision_log="CONNECTION CLOSED",
         )
         self._log("CONNECTION CLOSED")
@@ -617,25 +664,38 @@ class NjordVeriSistemi(QObject):
                 radio_failsafe = bool(self._durum.get("radio_failsafe"))
 
             if baglanti_var and not heartbeat_seen and baslangictan_beri > HEARTBEAT_TIMEOUT:
+                self._mission_uploaded_to_pixhawk = False
                 if not telemetry_lost_reported:
                     self._log(
                         "ERROR: No Pixhawk heartbeat received. Check COM port, baud rate, telemetry radio power, and close Mission Planner."
                     )
                 self._set(
+                    **self._telemetri_degerlerini_sifirla(),
                     link_ok=False,
                     heartbeat_seen=False,
                     telemetry_lost=True,
+                    armed=False,
+                    active_mission=None,
+                    arm_change_pending=False,
+                    mode_change_pending=False,
+                    requested_mode=-1,
                     decision_log="No Pixhawk heartbeat. Check COM/baud and telemetry radio.",
                 )
                 self._telemetry_lost_reported = True
             elif baglanti_var and heartbeat_seen and gecen_sure > HEARTBEAT_TIMEOUT:
+                self._mission_uploaded_to_pixhawk = False
                 if not telemetry_lost_reported:
                     self._log("!!! WARNING: HEARTBEAT LOST !!!")
                 self._set(
+                    **self._telemetri_degerlerini_sifirla(),
                     baglanti=True,
                     link_ok=False,
                     heartbeat_seen=True,
                     telemetry_lost=True,
+                    active_mission=None,
+                    arm_change_pending=False,
+                    mode_change_pending=False,
+                    requested_mode=-1,
                     decision_log=f"TELEMETRY LOST! No heartbeat for {HEARTBEAT_TIMEOUT:.0f}s.",
                 )
                 self._telemetry_lost_reported = True
@@ -696,7 +756,16 @@ class NjordVeriSistemi(QObject):
             )
 
         elif msg_type == "VFR_HUD":
-            self._set(yaw=msg.heading, hiz=msg.groundspeed)
+            if not self._telemetri_saglikli_mi():
+                self._set(**self._telemetri_degerlerini_sifirla())
+                return
+            try:
+                groundspeed = float(msg.groundspeed)
+            except (TypeError, ValueError):
+                groundspeed = 0.0
+            if not math.isfinite(groundspeed) or groundspeed < 0.0:
+                groundspeed = 0.0
+            self._set(yaw=msg.heading, hiz=groundspeed)
 
         elif msg_type == "ATTITUDE":
             self._set(
@@ -977,13 +1046,20 @@ class NjordVeriSistemi(QObject):
                 self._log("INFO: Vehicle is already armed.")
                 return
 
+        hold_mode_id = MODE_NAME_TO_ID["HOLD"]
+        self._log("SAFETY: ARM requested from GUI. Forcing HOLD before arming.")
+        self._mod_ayarla_mavlink(hold_mode_id)
+        time.sleep(0.2)
+
         if self._arm_disarm_gonder(armed=True, force=True, repeat=3):
             self._set(
                 requested_arm_state=True,
                 arm_change_pending=True,
-                decision_log="MAVLink FORCE ARM command sent. Waiting for heartbeat confirmation...",
+                requested_mode=hold_mode_id,
+                mode_change_pending=True,
+                decision_log="GUI ARM requested. HOLD command sent first, then FORCE ARM. Waiting for heartbeat confirmation...",
             )
-            self._log("MAVLink FORCE ARM command sent -> waiting for heartbeat confirmation")
+            self._log("MAVLink FORCE ARM command sent after HOLD -> waiting for heartbeat confirmation")
 
     def disarm_yap(self):
         self._disarm_yap_mavlink()
@@ -1227,6 +1303,9 @@ class NjordVeriSistemi(QObject):
             telemetry_lost = bool(self._durum.get("telemetry_lost"))
 
         return bool(self.connection and baglanti and link_ok and heartbeat_seen and not telemetry_lost)
+
+    def arac_bagli_mi(self):
+        return self._mavlink_gorev_baglantisi_hazir_mi()
 
     def _mavlink_gorev_yukle(self, waypoints):
         if not self._mavlink_gorev_baglantisi_hazir_mi():

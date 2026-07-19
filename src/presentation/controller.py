@@ -34,6 +34,7 @@ if SMOOTH is None:
 
 MAP_IMAGE_FILE = "ecdat_map.png"
 MAP_IMAGE_SIZE = (592, 832)
+BASE_UI_SIZE = (1680, 945)
 MAP_CALIBRATION_POINTS = [
     {"name": "WP1", "lat": 37.9524548, "lon": 32.5009435, "pixel": (260, 92)},
     {"name": "WP2", "lat": 37.9524210, "lon": 32.5015175, "pixel": (475, 98)},
@@ -200,7 +201,12 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
 
         if self._vehicle and self._valid_coordinate(self._vehicle):
             point = self._to_pixel(self._vehicle["lat"], self._vehicle["lon"])
-            self._arac_ciz(painter, point, self._vehicle.get("yaw", 0.0))
+            self._arac_ciz(
+                painter,
+                point,
+                self._vehicle.get("yaw", 0.0),
+                self._vehicle.get("cog"),
+            )
 
     def _valid_points(self):
         points = [wp for wp in self._waypoints if self._valid_coordinate(wp)]
@@ -295,11 +301,15 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
         painter.drawText(int(point.x() - 4), int(point.y() + 4), str(index))
 
-    def _arac_ciz(self, painter, point, yaw):
+    def _arac_ciz(self, painter, point, yaw, cog=None):
         try:
             yaw_deg = float(yaw)
         except (TypeError, ValueError):
             yaw_deg = 0.0
+        try:
+            cog_deg = float(cog)
+        except (TypeError, ValueError):
+            cog_deg = None
 
         painter.save()
         painter.translate(point)
@@ -321,6 +331,24 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         painter.drawLine(QPointF(0, -17), QPointF(0, 7))
         painter.restore()
 
+        if cog_deg is not None:
+            painter.save()
+            painter.translate(point)
+            painter.rotate(cog_deg)
+            painter.setPen(QPen(QColor(255, 193, 7, 235), 3))
+            painter.setBrush(QBrush(QColor(255, 193, 7, 220)))
+            painter.drawLine(QPointF(0, 0), QPointF(0, -36))
+            cog_head = QPolygonF(
+                [
+                    QPointF(0, -44),
+                    QPointF(7, -31),
+                    QPointF(0, -35),
+                    QPointF(-7, -31),
+                ]
+            )
+            painter.drawPolygon(cog_head)
+            painter.restore()
+
         painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(point, 18, 18)
@@ -328,6 +356,32 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         painter.setPen(QPen(QColor(0, 210, 255), 1))
         painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
         painter.drawText(int(point.x() + 20), int(point.y() + 5), f"{yaw_deg:.0f}°")
+        if cog_deg is not None:
+            painter.setPen(QPen(QColor(255, 193, 7), 1))
+            painter.drawText(int(point.x() + 20), int(point.y() + 19), f"COG {cog_deg:.0f} deg")
+
+
+class GorevYuklemeWorker(QtCore.QObject):
+    tamamlandi = QtCore.pyqtSignal(dict)
+    hata = QtCore.pyqtSignal(str)
+
+    def __init__(self, veri_sistemi, waypoints_yolu, mission_name):
+        super().__init__()
+        self.veri_sistemi = veri_sistemi
+        self.waypoints_yolu = waypoints_yolu
+        self.mission_name = mission_name
+
+    @QtCore.pyqtSlot()
+    def calistir(self):
+        try:
+            response = self.veri_sistemi.gorev_waypoints_yukle(
+                self.waypoints_yolu,
+                mission_name=self.mission_name,
+            )
+        except Exception as exc:
+            self.hata.emit(str(exc))
+            return
+        self.tamamlandi.emit(response)
 
 
 class GorevPlaniEkrani(QDialog):
@@ -336,10 +390,15 @@ class GorevPlaniEkrani(QDialog):
         uic.loadUi(os.path.join(UI_KLASOR, "planning.ui"), self)
         self.veri_sistemi = veri_sistemi
         self.secili_waypoints_yolu = None
+        self._yukleme_thread = None
+        self._yukleme_worker = None
+        self._yukle_buton_metni = self.pushButton_2.text()
         self.tableWidget.setRowCount(0)
         self.pushButton_4.clicked.connect(self.close)
         self.pushButton.clicked.connect(self.dosya_sec)
         self.pushButton_2.clicked.connect(self.yukle)
+        self.veri_sistemi.veri_guncelle.connect(self._yukleme_baglanti_durumu_guncelle)
+        self._yukleme_baglanti_durumu_guncelle({})
 
     def _secili_gorev_dosya_adi(self):
         for task_no in range(1, 5):
@@ -375,17 +434,45 @@ class GorevPlaniEkrani(QDialog):
         if not self.secili_waypoints_yolu:
             self.veri_sistemi.log_sinyali.emit("ERROR: Select a mission .waypoints file first.")
             return
-
-        try:
-            gorev_dosya_adi = self._secili_gorev_dosya_adi()
-            response = self.veri_sistemi.gorev_waypoints_yukle(
-                self.secili_waypoints_yolu,
-                mission_name=gorev_dosya_adi,
-            )
-        except Exception as exc:
-            self.veri_sistemi.log_sinyali.emit(f"ERROR: Mission waypoints upload failed: {exc}")
+        if not self.veri_sistemi.arac_bagli_mi():
+            self.veri_sistemi.log_sinyali.emit("ERROR: Vehicle is not connected. Mission upload blocked by GUI.")
+            return
+        if self._yukleme_thread is not None:
+            self.veri_sistemi.log_sinyali.emit("INFO: Mission upload is already running.")
             return
 
+        gorev_dosya_adi = self._secili_gorev_dosya_adi()
+        self.pushButton_2.setEnabled(False)
+        self.pushButton_2.setText("UPLOADING...")
+        self.veri_sistemi.log_sinyali.emit("MISSION UPLOAD STARTED: UI remains responsive.")
+
+        thread = QtCore.QThread(self)
+        worker = GorevYuklemeWorker(self.veri_sistemi, self.secili_waypoints_yolu, gorev_dosya_adi)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.calistir)
+        worker.tamamlandi.connect(self._yukleme_tamamlandi)
+        worker.hata.connect(self._yukleme_hatasi)
+        worker.tamamlandi.connect(worker.deleteLater)
+        worker.hata.connect(worker.deleteLater)
+        worker.tamamlandi.connect(thread.quit)
+        worker.hata.connect(thread.quit)
+        thread.finished.connect(self._yukleme_temizle)
+        self._yukleme_thread = thread
+        self._yukleme_worker = worker
+        thread.start()
+
+    def _yukleme_temizle(self):
+        thread = self._yukleme_thread
+        self._yukleme_thread = None
+        self._yukleme_worker = None
+        self._yukleme_baglanti_durumu_guncelle({})
+        if thread is not None:
+            thread.deleteLater()
+
+    def _yukleme_hatasi(self, hata):
+        self.veri_sistemi.log_sinyali.emit(f"ERROR: Mission waypoints upload failed: {hata}")
+
+    def _yukleme_tamamlandi(self, response):
         waypoints = self._waypoints_from_response(response)
         vehicle_confirmed = bool(response.get("pixhawk_confirmed") or response.get("pixhawk_uploaded"))
         if waypoints and vehicle_confirmed:
@@ -405,6 +492,13 @@ class GorevPlaniEkrani(QDialog):
             self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS SYNCED TO VEHICLE: {mission_id}")
         else:
             self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS PARSED ONLY: {mission_id}")
+
+    def _yukleme_baglanti_durumu_guncelle(self, _durum):
+        if self._yukleme_thread is not None:
+            return
+        bagli = self.veri_sistemi.arac_bagli_mi()
+        self.pushButton_2.setEnabled(bagli)
+        self.pushButton_2.setText(self._yukle_buton_metni if bagli else "VEHICLE OFFLINE")
 
     def _waypoints_from_response(self, response):
         raw_waypoints = (
@@ -441,6 +535,11 @@ class GorevPlaniEkrani(QDialog):
             self.tableWidget.setItem(i, 1, QTableWidgetItem(lat))
             self.tableWidget.setItem(i, 2, QTableWidgetItem(lon))
 
+    def closeEvent(self, event):
+        if self._yukleme_thread is not None:
+            self.veri_sistemi.log_sinyali.emit("INFO: Mission upload continues in background.")
+        super().closeEvent(event)
+
 
 class NjordAnaEkran(QMainWindow):
     def __init__(self):
@@ -448,7 +547,7 @@ class NjordAnaEkran(QMainWindow):
         uic.loadUi(os.path.join(UI_KLASOR, "njord_redesign.ui"), self)
         self._yeni_ui_adlarini_esle()
         self._yeni_ui_layout_duzelt()
-        self.setMinimumSize(1280, 720)
+        self.setMinimumSize(720, 405)
 
         self._log_gecmisi = []
         self._log_dosyasi = self._log_dosyasini_hazirla()
@@ -464,6 +563,8 @@ class NjordAnaEkran(QMainWindow):
         self._vessel_status_son = None
         self._vessel_status_aday = None
         self._vessel_status_aday_zamani = 0.0
+        self._arac_komutlari_aktif = False
+        self._kompakt_duzen_aktif = None
 
         self.sistem.veri_guncelle.connect(self.tazele)
         self.sistem.log_sinyali.connect(self.log_ekle)
@@ -473,11 +574,13 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton.clicked.connect(self.port_ac)
         self.pushButton_2.clicked.connect(self.plan_ac)
 
-        self.pushButton_4.clicked.connect(self.sistem.arm_yap)
-        self.pushButton_8.clicked.connect(self.sistem.disarm_yap)
-        self.pushButton_7.clicked.connect(self.sistem.acil_durum)
+        self.pushButton_4.clicked.connect(self.arm_yap)
+        self.pushButton_8.clicked.connect(self.disarm_yap)
+        self.pushButton_7.clicked.connect(self.acil_durum)
         self.pushButton_6.clicked.connect(self.icra)
         self.comboBox_2.currentTextChanged.connect(self.mod_secildi)
+        if self.comboBox_2.findText("HOLD") >= 0:
+            self.comboBox_2.setCurrentText("HOLD")
 
         self._kamera_placeholder_goster("NO CAMERA SIGNAL\nWaiting for Jetson video")
 
@@ -495,11 +598,13 @@ class NjordAnaEkran(QMainWindow):
         self._ek_veri_widgetlarini_hazirla()
         self._ana_haritayi_hazirla()
         self._komut_stillerini_hazirla()
+        self._olcekli_arayuz_hazirla()
         self._kamera_watchdog_timer = QtCore.QTimer(self)
         self._kamera_watchdog_timer.timeout.connect(self._kamera_watchdog_kontrol)
         self._kamera_watchdog_timer.start(1000)
 
         self._arm_butonlarini_sabitle()
+        self._arac_komutlarini_guncelle(False)
         self._camera_auto_started = False
         self._ui_hazir = True
         QtCore.QTimer.singleShot(0, self.showMaximized)
@@ -551,6 +656,153 @@ class NjordAnaEkran(QMainWindow):
         parent = widget.parentWidget()
         if parent is not None and parent.layout() is not None:
             parent.layout().removeWidget(widget)
+
+    def _olcekli_arayuz_hazirla(self):
+        if getattr(self, "_olcekli_arayuz_view", None) is not None:
+            return
+
+        icerik = self.takeCentralWidget()
+        if icerik is None:
+            return
+
+        genislik, yukseklik = BASE_UI_SIZE
+        icerik.setMinimumSize(genislik, yukseklik)
+        icerik.setMaximumSize(genislik, yukseklik)
+        icerik.resize(genislik, yukseklik)
+        icerik.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+
+        scene = QtWidgets.QGraphicsScene(self)
+        scene.setSceneRect(0, 0, genislik, yukseklik)
+        proxy = scene.addWidget(icerik)
+        proxy.setPos(0, 0)
+
+        view = QtWidgets.QGraphicsView(scene, self)
+        view.setFrameShape(QtWidgets.QFrame.NoFrame)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setAlignment(ALIGN_CENTER)
+        view.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        view.setViewportUpdateMode(QtWidgets.QGraphicsView.BoundingRectViewportUpdate)
+        view.setBackgroundBrush(QBrush(QColor(240, 246, 250)))
+
+        self.setCentralWidget(view)
+        self._olcekli_arayuz_view = view
+        self._olcekli_arayuz_scene = scene
+        self._olcekli_arayuz_proxy = proxy
+        self._arayuz_olcegini_guncelle()
+
+    def _arayuz_olcegini_guncelle(self):
+        view = getattr(self, "_olcekli_arayuz_view", None)
+        if view is None:
+            return
+
+        genislik, yukseklik = BASE_UI_SIZE
+        viewport = view.viewport().size()
+        if viewport.width() <= 0 or viewport.height() <= 0:
+            return
+
+        olcek = min(viewport.width() / genislik, viewport.height() / yukseklik)
+        view.resetTransform()
+        view.scale(olcek, olcek)
+        view.centerOn(genislik / 2, yukseklik / 2)
+
+    def _kompakt_duzen_gerekli_mi(self):
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is not None:
+            alan = screen.availableGeometry()
+            if alan.width() < 1400 or alan.height() < 820:
+                return True
+        return self.width() < 1280 or self.height() < 760
+
+    def _ekran_duzenini_uygula(self, zorla=False):
+        kompakt = self._kompakt_duzen_gerekli_mi()
+        if not zorla and self._kompakt_duzen_aktif == kompakt:
+            return
+        self._kompakt_duzen_aktif = kompakt
+        self._ekran_modu_boylarini_uygula()
+        self._batarya_paneli_tek_sutun_yap()
+        self._sistem_status_dikey_yap()
+        self._imu_paneli_dikey_okunur_yap()
+        self._mission_secimi_dikey_yap()
+        self._kucuk_ekran_minimumlarini_gevset()
+
+    def _ekran_modu_boylarini_uygula(self):
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        for buton in (getattr(self, "pushButton", None), getattr(self, "pushButton_2", None)):
+            if buton is not None:
+                buton.setMinimumHeight(38 if kompakt else 48)
+
+        for buton in (
+            getattr(self, "pushButton_6", None),
+            getattr(self, "pushButton_wifi", None),
+            getattr(self, "pushButton_7", None),
+        ):
+            if buton is not None:
+                buton.setMinimumHeight(36 if kompakt else 58)
+
+        for widget, maximum in (
+            (getattr(self, "groupBox_7", None), 16777215 if kompakt else 205),
+            (getattr(self, "groupBox_6", None), 16777215 if kompakt else 380),
+            (getattr(self, "groupBox", None), 16777215 if kompakt else 360),
+            (getattr(self, "groupBox_2", None), 16777215 if kompakt else 360),
+            (getattr(self, "groupBox_3", None), 16777215 if kompakt else 500),
+            (getattr(self, "groupBox_bottom", None), 16777215 if kompakt else 150),
+        ):
+            if widget is not None:
+                widget.setMaximumHeight(maximum)
+
+    def _kucuk_ekran_minimumlarini_gevset(self):
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        for widget, width in (
+            (getattr(self, "topVisualPanel", None), 230 if kompakt else 520),
+            (getattr(self, "bottomInfoPanel", None), 570 if kompakt else 680),
+            (getattr(self, "leftPanel", None), 175 if kompakt else 330),
+            (getattr(self, "middlePanel", None), 175 if kompakt else 330),
+            (getattr(self, "rightPanel", None), 205 if kompakt else 430),
+        ):
+            if widget is not None:
+                widget.setMinimumWidth(width)
+
+        for widget, size in (
+            (getattr(self, "LCAMERA", None), (210, 130) if kompakt else (400, 290)),
+            (getattr(self, "LMAINMAP", None), (210, 150) if kompakt else (400, 340)),
+            (getattr(self, "LLOGIC", None), (120, 44) if kompakt else (170, 150)),
+            (getattr(self, "TXTCOLREG", None), (180, 76) if kompakt else (300, 150)),
+            (getattr(self, "TXTSTATUSLOG", None), (180, 76) if kompakt else (300, 120)),
+            (getattr(self, "LALGORITHM", None), (180, 76) if kompakt else (300, 130)),
+        ):
+            if widget is not None:
+                widget.setMinimumSize(*size)
+
+        for widget, width in (
+            (getattr(self, "LMAPGPS", None), 64 if kompakt else 110),
+            (getattr(self, "LMAPSATS", None), 64 if kompakt else 110),
+            (getattr(self, "LMAPDIST", None), 92 if kompakt else 210),
+        ):
+            if widget is not None:
+                widget.setMinimumWidth(width)
+
+        for widget in (
+            getattr(self, "groupBox_4", None),
+            getattr(self, "groupBox_mapMain", None),
+            getattr(self, "groupBox_algorithm", None),
+            getattr(self, "groupBox_8", None),
+            getattr(self, "groupBox_5", None),
+        ):
+            if widget is not None:
+                widget.setMinimumHeight(0)
+                widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        for widget in (
+            getattr(self, "groupBox", None),
+            getattr(self, "groupBox_2", None),
+            getattr(self, "groupBox_3", None),
+            getattr(self, "groupBox_6", None),
+            getattr(self, "groupBox_7", None),
+            getattr(self, "groupBox_bottom", None),
+        ):
+            if widget is not None:
+                widget.setMinimumHeight(0)
 
     def _gorsel_ust_duzeni_duzenle(self):
         if not all(hasattr(self, ad) for ad in ("topVisualPanel", "groupBox_4", "groupBox_mapMain", "groupBox_8")):
@@ -743,9 +995,11 @@ class NjordAnaEkran(QMainWindow):
         if not isinstance(layout, QtWidgets.QGridLayout):
             return
 
-        layout.setContentsMargins(10, 20, 10, 10)
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(8)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        self._layout_ogelerini_temizle(layout)
+        layout.setContentsMargins(8 if kompakt else 10, 18 if kompakt else 20, 8 if kompakt else 10, 8 if kompakt else 10)
+        layout.setHorizontalSpacing(6 if kompakt else 8)
+        layout.setVerticalSpacing(4 if kompakt else 8)
 
         cell_widgets = [
             getattr(self, "label", None),
@@ -757,39 +1011,42 @@ class NjordAnaEkran(QMainWindow):
         ]
         for widget in cell_widgets:
             if widget is not None:
-                widget.setMinimumHeight(24)
+                widget.setMinimumHeight(18 if kompakt else 24)
                 widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
                 widget.setWordWrap(False)
 
         if hasattr(self, "progressBar"):
             layout.addWidget(self.progressBar, 0, 0, 1, 2)
 
-        for row, widget in enumerate((w for w in cell_widgets if w is not None), start=1):
-            layout.addWidget(widget, row, 0, 1, 2)
+        if kompakt:
+            for index, widget in enumerate((w for w in cell_widgets if w is not None)):
+                layout.addWidget(widget, 1 + index % 3, index // 3, 1, 1)
+        else:
+            for row, widget in enumerate((w for w in cell_widgets if w is not None), start=1):
+                layout.addWidget(widget, row, 0, 1, 2)
 
         total_current_label = getattr(self, "label_18", None)
         total_voltage_label = getattr(self, "label_20", None)
         current_lcd = getattr(self, "lcdNumber", None)
         voltage_lcd = getattr(self, "lcdNumber_2", None)
 
-        current_row = 7
+        current_row = 4 if kompakt else 7
         if total_current_label is not None:
-            layout.addWidget(total_current_label, current_row, 0, 1, 2)
-            total_current_label.setMinimumHeight(24)
+            layout.addWidget(total_current_label, current_row, 0, 1, 1 if kompakt else 2)
+            total_current_label.setMinimumHeight(18 if kompakt else 24)
             total_current_label.setWordWrap(False)
         if current_lcd is not None:
-            layout.addWidget(current_lcd, current_row + 1, 0, 1, 2)
-            current_lcd.setMinimumHeight(46)
+            layout.addWidget(current_lcd, current_row + 1, 0, 1, 1 if kompakt else 2)
+            current_lcd.setMinimumHeight(34 if kompakt else 46)
             current_lcd.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
-        voltage_row = current_row + 2
         if total_voltage_label is not None:
-            layout.addWidget(total_voltage_label, voltage_row, 0, 1, 2)
-            total_voltage_label.setMinimumHeight(24)
+            layout.addWidget(total_voltage_label, current_row if kompakt else current_row + 2, 1 if kompakt else 0, 1, 1 if kompakt else 2)
+            total_voltage_label.setMinimumHeight(18 if kompakt else 24)
             total_voltage_label.setWordWrap(False)
         if voltage_lcd is not None:
-            layout.addWidget(voltage_lcd, voltage_row + 1, 0, 1, 2)
-            voltage_lcd.setMinimumHeight(46)
+            layout.addWidget(voltage_lcd, current_row + 1 if kompakt else current_row + 3, 1 if kompakt else 0, 1, 1 if kompakt else 2)
+            voltage_lcd.setMinimumHeight(34 if kompakt else 46)
             voltage_lcd.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         if not hasattr(self, "LBATTERYPOWER"):
@@ -800,12 +1057,13 @@ class NjordAnaEkran(QMainWindow):
         energy_style = "font-size: 12pt; font-weight: bold; color: #0b2239;"
         for widget in (self.LBATTERYPOWER, self.LBATTERYWH):
             widget.setStyleSheet(energy_style)
-            widget.setMinimumHeight(26)
+            widget.setMinimumHeight(20 if kompakt else 26)
             widget.setWordWrap(False)
             widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
-        layout.addWidget(self.LBATTERYPOWER, voltage_row + 2, 0, 1, 2)
-        layout.addWidget(self.LBATTERYWH, voltage_row + 3, 0, 1, 2)
+        energy_row = current_row + 2 if kompakt else current_row + 4
+        layout.addWidget(self.LBATTERYPOWER, energy_row, 0, 1, 2)
+        layout.addWidget(self.LBATTERYWH, energy_row + 1, 0, 1, 2)
 
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
@@ -825,33 +1083,57 @@ class NjordAnaEkran(QMainWindow):
             return
         layout = self.groupBox.layout()
         self._layout_ogelerini_temizle(layout)
-        layout.setContentsMargins(14, 26, 14, 16)
-        layout.setSpacing(14)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        layout.setContentsMargins(10 if kompakt else 14, 20 if kompakt else 26, 10 if kompakt else 14, 10 if kompakt else 16)
+        layout.setSpacing(6 if kompakt else 14)
 
-        for widget in (
-            getattr(self, "pushButton", None),
-            self._vessel_status_label,
-            getattr(self, "pushButton_4", None),
-            getattr(self, "pushButton_8", None),
-            getattr(self, "comboBox_2", None),
-        ):
-            if widget is None:
-                continue
-            layout.addWidget(widget)
-            widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-            if widget is self._vessel_status_label:
-                layout.addSpacing(12)
+        if kompakt:
+            connect_button = getattr(self, "pushButton", None)
+            if connect_button is not None:
+                layout.addWidget(connect_button)
+                connect_button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+            if self._vessel_status_label is not None:
+                layout.addWidget(self._vessel_status_label)
+                self._vessel_status_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+            arm_layout = QtWidgets.QHBoxLayout()
+            arm_layout.setContentsMargins(0, 0, 0, 0)
+            arm_layout.setSpacing(6)
+            for widget in (getattr(self, "pushButton_4", None), getattr(self, "pushButton_8", None)):
+                if widget is not None:
+                    arm_layout.addWidget(widget)
+                    widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            layout.addLayout(arm_layout)
+
+            if hasattr(self, "comboBox_2"):
+                layout.addWidget(self.comboBox_2)
+                self.comboBox_2.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        else:
+            for widget in (
+                getattr(self, "pushButton", None),
+                self._vessel_status_label,
+                getattr(self, "pushButton_4", None),
+                getattr(self, "pushButton_8", None),
+                getattr(self, "comboBox_2", None),
+            ):
+                if widget is None:
+                    continue
+                layout.addWidget(widget)
+                widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+                if widget is self._vessel_status_label:
+                    layout.addSpacing(12)
 
         if hasattr(self, "pushButton"):
-            self.pushButton.setMinimumHeight(54)
+            self.pushButton.setMinimumHeight(38 if kompakt else 54)
         if self._vessel_status_label is not None:
-            self._vessel_status_label.setMinimumHeight(62)
-            self._vessel_status_label.setMaximumHeight(86)
+            self._vessel_status_label.setMinimumHeight(42 if kompakt else 62)
+            self._vessel_status_label.setMaximumHeight(54 if kompakt else 86)
         for buton in (getattr(self, "pushButton_4", None), getattr(self, "pushButton_8", None)):
             if buton is not None:
-                buton.setMinimumHeight(50)
+                buton.setMinimumHeight(36 if kompakt else 50)
         if hasattr(self, "comboBox_2"):
-            self.comboBox_2.setMinimumHeight(50)
+            self.comboBox_2.setMinimumHeight(36 if kompakt else 50)
 
     def _imu_paneli_dikey_okunur_yap(self):
         if not hasattr(self, "groupBox_2"):
@@ -860,9 +1142,11 @@ class NjordAnaEkran(QMainWindow):
         if not isinstance(layout, QtWidgets.QGridLayout):
             return
 
-        layout.setContentsMargins(12, 22, 12, 12)
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(8)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        self._layout_ogelerini_temizle(layout)
+        layout.setContentsMargins(8 if kompakt else 12, 18 if kompakt else 22, 8 if kompakt else 12, 8 if kompakt else 12)
+        layout.setHorizontalSpacing(6 if kompakt else 8)
+        layout.setVerticalSpacing(4 if kompakt else 8)
 
         roll = getattr(self, "pushButton_5", None)
         pitch = getattr(self, "pushButton_9", None)
@@ -876,8 +1160,8 @@ class NjordAnaEkran(QMainWindow):
 
         for row, widget in enumerate((roll, pitch, yaw)):
             if widget is not None:
-                layout.addWidget(widget, row, 0, 1, 2)
-                widget.setMinimumHeight(38)
+                layout.addWidget(widget, row, 0, 1, 1 if kompakt else 2)
+                widget.setMinimumHeight(30 if kompakt else 38)
                 widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         pairs = (
@@ -889,35 +1173,37 @@ class NjordAnaEkran(QMainWindow):
         for offset, (title, value) in enumerate(pairs):
             row = start_row + offset
             if title is not None:
-                layout.addWidget(title, row, 0)
-                title.setMinimumHeight(34)
+                layout.addWidget(title, offset if kompakt else row, 1 if kompakt else 0)
+                title.setMinimumHeight(28 if kompakt else 34)
                 title.setStyleSheet("font-size: 10pt; font-weight: bold; color: #0b2239;")
             if value is not None:
-                layout.addWidget(value, row, 1)
-                value.setMinimumHeight(38)
+                layout.addWidget(value, offset if kompakt else row, 2 if kompakt else 1)
+                value.setMinimumHeight(30 if kompakt else 38)
                 value.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         if self._cog_label is not None:
-            layout.addWidget(self._cog_label, start_row + len(pairs), 0, 1, 2, ALIGN_CENTER)
-            self._cog_label.setMinimumSize(150, 36)
-            self._cog_label.setMaximumHeight(42)
+            layout.addWidget(self._cog_label, 3 if kompakt else start_row + len(pairs), 0, 1, 3 if kompakt else 2, ALIGN_CENTER)
+            self._cog_label.setMinimumSize(100 if kompakt else 150, 28 if kompakt else 36)
+            self._cog_label.setMaximumHeight(34 if kompakt else 42)
 
         layout.setColumnStretch(0, 1)
-        layout.setColumnStretch(1, 2)
+        layout.setColumnStretch(1, 1 if kompakt else 2)
+        layout.setColumnStretch(2, 2 if kompakt else 0)
 
     def _mission_secimi_dikey_yap(self):
         if not hasattr(self, "groupBox_7") or self.groupBox_7.layout() is None:
             return
         layout = self.groupBox_7.layout()
         self._layout_ogelerini_temizle(layout)
-        layout.setContentsMargins(14, 20, 14, 14)
-        layout.setSpacing(8)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        layout.setContentsMargins(8 if kompakt else 14, 18 if kompakt else 20, 8 if kompakt else 14, 8 if kompakt else 14)
+        layout.setSpacing(6 if kompakt else 8)
         if isinstance(layout, QtWidgets.QBoxLayout):
-            layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+            layout.setDirection(QtWidgets.QBoxLayout.LeftToRight if kompakt else QtWidgets.QBoxLayout.TopToBottom)
 
         for radio in (self.radioButton, self.radioButton_2, self.radioButton_3, self.radioButton_4):
             layout.addWidget(radio)
-            radio.setMinimumHeight(34)
+            radio.setMinimumHeight(26 if kompakt else 34)
             radio.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def _yeni_ui_layout_duzelt(self):
@@ -1096,6 +1382,7 @@ class NjordAnaEkran(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._arayuz_olcegini_guncelle()
         if getattr(self, "_ana_harita_katmani", None) is not None and hasattr(self, "LMAINMAP"):
             self._ana_harita_katmani.setGeometry(self.LMAINMAP.rect())
 
@@ -1170,12 +1457,15 @@ class NjordAnaEkran(QMainWindow):
         )
 
     def _komut_stillerini_hazirla(self):
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
         self._komut_buton_stili = (
             "QPushButton { background-color: #34495e; color: white; "
             "border-radius: 12px; font-weight: bold; padding: 8px; "
             "border: 1px solid #2c3e50; }"
             "QPushButton:hover { background-color: #2c3e50; }"
             "QPushButton:pressed { background-color: #1a252f; }"
+            "QPushButton:disabled { background-color: #95a5a6; color: #ecf0f1; "
+            "border: 1px solid #7f8c8d; }"
         )
         self._mode_combo_stili = (
             "QComboBox { background-color: #34495e; color: white; "
@@ -1188,6 +1478,8 @@ class NjordAnaEkran(QMainWindow):
             "border-top: 8px solid white; margin-top: 2px; }"
             "QComboBox QAbstractItemView { background-color: #1a1a1a; color: #ecf0f1; "
             "selection-background-color: #3498db; selection-color: white; outline: none; }"
+            "QComboBox:disabled { background-color: #95a5a6; color: #ecf0f1; "
+            "border: 1px solid #7f8c8d; }"
         )
         self._veri_gostergesi_stili = (
             "QPushButton { background-color: #f8fcff; color: #0b2239; "
@@ -1209,6 +1501,8 @@ class NjordAnaEkran(QMainWindow):
             "border: 2px solid #922b21; }"
             "QPushButton:hover { background-color: #e74c3c; }"
             "QPushButton:pressed { background-color: #922b21; }"
+            "QPushButton:disabled { background-color: #95a5a6; color: #ecf0f1; "
+            "border: 2px solid #7f8c8d; }"
         )
 
         for buton in (
@@ -1230,7 +1524,7 @@ class NjordAnaEkran(QMainWindow):
             lcd.setStyleSheet(self._lcd_stili)
 
         for buton in (self.pushButton, self.pushButton_2):
-            buton.setMinimumHeight(48)
+            buton.setMinimumHeight(38 if kompakt else 48)
             buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         self.textEdit.setStyleSheet(
@@ -1248,7 +1542,7 @@ class NjordAnaEkran(QMainWindow):
         self.comboBox_2.setStyleSheet(self._mode_combo_stili)
 
         if hasattr(self, "groupBox_7"):
-            self.groupBox_7.setMaximumHeight(205)
+            self.groupBox_7.setMaximumHeight(90 if kompakt else 205)
             self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
         radio_stili = (
@@ -1261,7 +1555,7 @@ class NjordAnaEkran(QMainWindow):
             "border-radius: 10px; background-color: #3498db; }"
         )
         for radio in (self.radioButton, self.radioButton_2, self.radioButton_3, self.radioButton_4):
-            radio.setMinimumHeight(36)
+            radio.setMinimumHeight(26 if kompakt else 36)
             radio.setStyleSheet(radio_stili)
             radio.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
@@ -1291,12 +1585,10 @@ class NjordAnaEkran(QMainWindow):
                 orta_layout.setStretchFactor(self.pushButton_7, 0)
 
         for buton in (self.pushButton_6, self.pushButton_wifi, self.pushButton_7):
-            buton.setMinimumHeight(58)
+            buton.setMinimumHeight(40 if kompakt else 58)
             buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
-        self._sistem_status_dikey_yap()
-        self._imu_paneli_dikey_okunur_yap()
-        self._mission_secimi_dikey_yap()
+        self._kompakt_duzen_aktif = False
 
     def _decision_metni(self, d):
         colreg = d.get("active_colreg_rule") or d.get("colreg_rule") or d.get("colreg") or "--"
@@ -1443,6 +1735,48 @@ class NjordAnaEkran(QMainWindow):
                 value = 0.0
             etiket.setText(f"CELL {index + 1}: {value:.2f} V")
 
+    def _arac_bagli_mi(self, d):
+        return bool(
+            d.get("baglanti")
+            and d.get("link_ok")
+            and d.get("heartbeat_seen")
+            and not d.get("telemetry_lost")
+        )
+
+    def _arac_komut_butonlari(self):
+        return (
+            self.pushButton_4,
+            self.pushButton_8,
+            self.pushButton_7,
+            self.pushButton_6,
+            self.comboBox_2,
+        )
+
+    def _arac_komutlarini_guncelle(self, bagli):
+        self._arac_komutlari_aktif = bool(bagli)
+        for widget in self._arac_komut_butonlari():
+            widget.setEnabled(self._arac_komutlari_aktif)
+        if not self._arac_komutlari_aktif:
+            self._arac_komutlarini_kilitle()
+
+    def _arac_komutlarini_kilitle(self):
+        self.pushButton_4.setStyleSheet(self._komut_buton_stili)
+        self.pushButton_4.setText("ARM LOCKED")
+        self.pushButton_8.setStyleSheet(self._komut_buton_stili)
+        self.pushButton_8.setText("DISARM LOCKED")
+        self.pushButton_7.setStyleSheet(self._acil_stop_stili)
+        self.pushButton_7.setText("STOP LOCKED")
+        self.pushButton_6.setStyleSheet(self._komut_buton_stili)
+        self.pushButton_6.setText("NO VEHICLE")
+        self.comboBox_2.setStyleSheet(self._mode_combo_stili)
+        self._mode_combo_son_stil = self._mode_combo_stili
+
+    def _komut_engelli_mi(self):
+        if self._arac_komutlari_aktif:
+            return False
+        self.sistem.log_sinyali.emit("ERROR: Vehicle is not connected. Command blocked by GUI.")
+        return True
+
     def tazele(self, d):
         self.pushButton_10.setText(f"YAW: {d.get('yaw', 0.0):.1f}°")
         self.pushButton_5.setText(f"ROLL: {d.get('roll', 0.0):.1f}°")
@@ -1459,6 +1793,7 @@ class NjordAnaEkran(QMainWindow):
                     "lat": d.get("lat", 0.0),
                     "lon": d.get("lon", 0.0),
                     "yaw": d.get("yaw", 0.0),
+                    "cog": d.get("cog", 0.0),
                     "speed": d.get("hiz", 0.0),
                 }
             )
@@ -1473,18 +1808,19 @@ class NjordAnaEkran(QMainWindow):
         self._vessel_status_guncelle(d)
         self.label_8.setText(d.get("decision_log", "Waiting for mission data..."))
 
-        bagli = bool(
-            d.get("baglanti")
-            and d.get("link_ok")
-            and d.get("heartbeat_seen")
-            and not d.get("telemetry_lost")
-        )
+        bagli = self._arac_bagli_mi(d)
         if bagli:
             self.pushButton.setStyleSheet(
                 "background-color: #2ecc71; color: white; font-weight: bold; "
                 "border-radius: 8px; border: 2px solid #27ae60; padding: 8px;"
             )
             self.pushButton.setText("CONNECTED")
+        elif d.get("telemetry_lost"):
+            self.pushButton.setStyleSheet(
+                "background-color: #c0392b; color: white; font-weight: bold; "
+                "border-radius: 8px; border: 2px solid #922b21; padding: 8px;"
+            )
+            self.pushButton.setText("LINK LOST")
         elif d.get("baglanti"):
             self.pushButton.setStyleSheet(
                 "background-color: #f39c12; color: white; font-weight: bold; "
@@ -1513,6 +1849,10 @@ class NjordAnaEkran(QMainWindow):
                     "font-weight: bold; border-radius: 5px;"
                 )
                 self.pushButton_wifi.setText("WI-FI LOST\nSearching Jetson")
+
+        self._arac_komutlarini_guncelle(bagli)
+        if not bagli:
+            return
 
         bekliyor = "background-color: #7f8c8d; color: white; font-weight: bold;"
 
@@ -1549,8 +1889,27 @@ class NjordAnaEkran(QMainWindow):
 
         self._mode_combo_durumunu_guncelle(d, bekliyor_turuncu, onaylandi_mavi)
 
+    def arm_yap(self):
+        if self._komut_engelli_mi():
+            return
+        if self.comboBox_2.findText("HOLD") >= 0:
+            blocker = QtCore.QSignalBlocker(self.comboBox_2)
+            self.comboBox_2.setCurrentText("HOLD")
+            del blocker
+        self.sistem.arm_yap()
+
+    def disarm_yap(self):
+        if self._komut_engelli_mi():
+            return
+        self.sistem.disarm_yap()
+
+    def acil_durum(self):
+        if self._komut_engelli_mi():
+            return
+        self.sistem.acil_durum()
+
     def mod_secildi(self, mod_adi):
-        if not self._ui_hazir or not mod_adi:
+        if not self._ui_hazir or not mod_adi or self._komut_engelli_mi():
             return
         self.sistem.mod_ayarla_ad(mod_adi)
 
@@ -1565,7 +1924,8 @@ class NjordAnaEkran(QMainWindow):
             self._mode_combo_son_stil = yeni_stil
 
     def _armed_butonunu_sabitle(self):
-        self.pushButton_4.setMinimumSize(180, 50)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        self.pushButton_4.setMinimumSize(88 if kompakt else 180, 36 if kompakt else 50)
         self.pushButton_4.setStyleSheet(
             "background-color: #2ecc71; color: white; "
             "font-weight: bold; border-radius: 10px; "
@@ -1574,7 +1934,8 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton_4.setText("ARMED")
 
     def _disarmed_butonunu_sabitle(self):
-        self.pushButton_8.setMinimumSize(180, 50)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        self.pushButton_8.setMinimumSize(88 if kompakt else 180, 36 if kompakt else 50)
         self.pushButton_8.setStyleSheet(
             "background-color: #e74c3c; color: white; "
             "font-weight: bold; border-radius: 6px; "
@@ -1658,6 +2019,8 @@ class NjordAnaEkran(QMainWindow):
                 etiket.setStyleSheet("")
 
     def icra(self):
+        if self._komut_engelli_mi():
+            return
         if self.radioButton.isChecked():
             gorev = "M1"
         elif self.radioButton_2.isChecked():
