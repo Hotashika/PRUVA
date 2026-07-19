@@ -76,6 +76,9 @@ class PortEkrani(QDialog):
         super().__init__()
         uic.loadUi(os.path.join(UI_KLASOR, "port.ui"), self)
         self.veri_sistemi = veri_sistemi
+        if hasattr(self, "pushButton"):
+            self.pushButton.setText("REFRESH PORT")
+            self.pushButton.clicked.connect(self._varsayilan_portlari_ayarla)
         self._varsayilan_portlari_ayarla()
         self.pushButton_2.clicked.connect(self.close)
         self.buttonBox.accepted.connect(self.onayla)
@@ -90,13 +93,17 @@ class PortEkrani(QDialog):
         if portlar:
             secili = portlar[0]
             self.lineEdit.setText(secili["device"])
+            adaylar = ", ".join(
+                f"{port['device']} ({port['description']})" for port in portlar[:4]
+            )
+            self.veri_sistemi.log_sinyali.emit(f"SERIAL PORTS FOUND: {adaylar}")
             if secili["is_rfd"]:
                 self.veri_sistemi.log_sinyali.emit(
                     f"RFD RADIO AUTO-DETECTED: {secili['device']} ({secili['description']})"
                 )
             else:
                 self.veri_sistemi.log_sinyali.emit(
-                    f"INFO: RFD identity was not confirmed; using serial port: {secili['device']}"
+                    f"INFO: Using best detected serial port: {secili['device']} ({secili['description']})"
                 )
         elif not self.lineEdit.text().strip():
             self.lineEdit.setText("COM6")
@@ -111,11 +118,30 @@ class PortEkrani(QDialog):
         ).lower()
         if any(ipucu in alanlar for ipucu in ("rfd900", "rfd868", "rfd radio", "rfdesign", "rf design")):
             return 100
+        if any(ipucu in alanlar for ipucu in ("ardupilot", "pixhawk", "fmuv", "holybro")):
+            return 95
         if "sik" in alanlar and any(ipucu in alanlar for ipucu in ("radio", "telemetry", "modem")):
             return 80
         if "telemetry radio" in alanlar:
             return 70
+        if any(
+            ipucu in alanlar
+            for ipucu in (
+                "cp210",
+                "silicon labs",
+                "ftdi",
+                "usb serial",
+                "usb-serial",
+                "usb seri",
+                "usb-seri",
+                "ch340",
+                "wch",
+            )
+        ):
+            return 60
         device = str(getattr(port, "device", "") or "").lower()
+        if "bluetooth" in alanlar:
+            return -10
         if "ttyusb" in device or "ttyacm" in device:
             return 10
         if device.startswith("com"):
@@ -563,7 +589,14 @@ class NjordAnaEkran(QMainWindow):
         self._vessel_status_son = None
         self._vessel_status_aday = None
         self._vessel_status_aday_zamani = 0.0
-        self._arac_komutlari_aktif = False
+        self._arac_komutlari_aktif = None
+        self._son_armed_durum = False
+        self._arm_buton_gorunum_durumu = None
+        self._arm_durum_aday = None
+        self._arm_durum_aday_zamani = 0.0
+        self._arm_komut_bekliyor = False
+        self._arm_komut_hedef = None
+        self._arm_komut_baslangic = 0.0
         self._kompakt_duzen_aktif = None
 
         self.sistem.veri_guncelle.connect(self.tazele)
@@ -574,8 +607,8 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton.clicked.connect(self.port_ac)
         self.pushButton_2.clicked.connect(self.plan_ac)
 
-        self.pushButton_4.clicked.connect(self.arm_yap)
-        self.pushButton_8.clicked.connect(self.disarm_yap)
+        self.pushButton_4.clicked.connect(self.arm_disarm_degistir)
+        self.pushButton_8.hide()
         self.pushButton_7.clicked.connect(self.acil_durum)
         self.pushButton_6.clicked.connect(self.icra)
         self.comboBox_2.currentTextChanged.connect(self.mod_secildi)
@@ -700,6 +733,7 @@ class NjordAnaEkran(QMainWindow):
         view.scale(olcek, olcek)
         view.centerOn(genislik / 2, yukseklik / 2)
         QtCore.QTimer.singleShot(0, self._mission_yuksekligini_decision_hizasina_ayarla)
+        QtCore.QTimer.singleShot(0, self._safety_yuksekligini_harita_hizasina_ayarla)
 
     def _mission_yuksekligini_decision_hizasina_ayarla(self):
         if not all(hasattr(self, ad) for ad in ("groupBox_6", "groupBox_7", "groupBox_8")):
@@ -728,6 +762,31 @@ class NjordAnaEkran(QMainWindow):
         self.groupBox_7.setMinimumHeight(secim_yuksekligi)
         self.groupBox_7.setMaximumHeight(secim_yuksekligi)
         self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+    def _safety_yuksekligini_harita_hizasina_ayarla(self):
+        if not all(hasattr(self, ad) for ad in ("groupBox_bottom", "groupBox_mapMain")):
+            return
+
+        icerik = getattr(self, "_olcekli_arayuz_icerik", None)
+        if icerik is None:
+            return
+
+        safety_top = self.groupBox_bottom.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        map_top = self.groupBox_mapMain.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        map_bottom = map_top + self.groupBox_mapMain.height()
+        hedef_yukseklik = map_bottom - safety_top
+        if hedef_yukseklik <= 0:
+            return
+
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        minimum = 170 if kompakt else 190
+        hedef_yukseklik = max(minimum, min(int(hedef_yukseklik), 280))
+        if abs(self.groupBox_bottom.height() - hedef_yukseklik) <= 2:
+            return
+
+        self.groupBox_bottom.setMinimumHeight(hedef_yukseklik)
+        self.groupBox_bottom.setMaximumHeight(hedef_yukseklik)
+        self.groupBox_bottom.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def _kompakt_duzen_gerekli_mi(self):
         screen = QtWidgets.QApplication.primaryScreen()
@@ -926,7 +985,13 @@ class NjordAnaEkran(QMainWindow):
         self._layouttan_cikar(self.groupBox_bottom)
         if left_layout.indexOf(self.groupBox_bottom) < 0:
             left_layout.addWidget(self.groupBox_bottom)
-        self.groupBox_bottom.setMaximumHeight(150)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        safety_layout = self.groupBox_bottom.layout()
+        if isinstance(safety_layout, QtWidgets.QBoxLayout):
+            safety_layout.setContentsMargins(12, 24 if kompakt else 28, 12, 12)
+            safety_layout.setSpacing(12 if kompakt else 16)
+        self.groupBox_bottom.setMinimumHeight(170 if kompakt else 190)
+        self.groupBox_bottom.setMaximumHeight(280)
         self.groupBox_bottom.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
 
     def _algoritma_gorsel_panelini_hazirla(self):
@@ -1093,7 +1158,7 @@ class NjordAnaEkran(QMainWindow):
             arm_layout = QtWidgets.QHBoxLayout()
             arm_layout.setContentsMargins(0, 0, 0, 0)
             arm_layout.setSpacing(6)
-            for widget in (getattr(self, "pushButton_4", None), getattr(self, "pushButton_8", None)):
+            for widget in (getattr(self, "pushButton_4", None),):
                 if widget is not None:
                     arm_layout.addWidget(widget)
                     widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -1107,7 +1172,6 @@ class NjordAnaEkran(QMainWindow):
                 getattr(self, "pushButton", None),
                 self._vessel_status_label,
                 getattr(self, "pushButton_4", None),
-                getattr(self, "pushButton_8", None),
                 getattr(self, "comboBox_2", None),
             ):
                 if widget is None:
@@ -1122,9 +1186,10 @@ class NjordAnaEkran(QMainWindow):
         if self._vessel_status_label is not None:
             self._vessel_status_label.setMinimumHeight(42 if kompakt else 62)
             self._vessel_status_label.setMaximumHeight(54 if kompakt else 86)
-        for buton in (getattr(self, "pushButton_4", None), getattr(self, "pushButton_8", None)):
-            if buton is not None:
-                buton.setMinimumHeight(36 if kompakt else 50)
+        if getattr(self, "pushButton_4", None) is not None:
+            self.pushButton_4.setMinimumHeight(36 if kompakt else 50)
+        if getattr(self, "pushButton_8", None) is not None:
+            self.pushButton_8.hide()
         if hasattr(self, "comboBox_2"):
             self.comboBox_2.setMinimumHeight(36 if kompakt else 50)
 
@@ -1324,6 +1389,7 @@ class NjordAnaEkran(QMainWindow):
 
     def kamera_goster(self, image):
         if image is None:
+            self._last_camera_frame_time = None
             self._kamera_placeholder_goster("NO CAMERA SIGNAL\nWaiting for video signal")
             return
 
@@ -1347,6 +1413,7 @@ class NjordAnaEkran(QMainWindow):
             self._last_camera_frame_time = None
 
     def _kamera_placeholder_goster(self, mesaj):
+        self.label_7.setPixmap(QPixmap())
         self.label_7.clear()
         self.label_7.setText(mesaj)
         self.label_7.setStyleSheet(
@@ -1601,7 +1668,9 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton_2.setMaximumWidth(16777215)
         self.pushButton_6.setMaximumWidth(16777215)
         for buton in (self.pushButton_wifi, self.pushButton_7):
-            buton.setMinimumHeight(40 if kompakt else 58)
+            buton_yukseklik = 46 if kompakt else 56
+            buton.setMinimumHeight(buton_yukseklik)
+            buton.setMaximumHeight(buton_yukseklik)
             buton.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         self._kompakt_duzen_aktif = False
@@ -1749,24 +1818,34 @@ class NjordAnaEkran(QMainWindow):
     def _arac_komut_butonlari(self):
         return (
             self.pushButton_4,
-            self.pushButton_8,
             self.pushButton_7,
             self.pushButton_6,
             self.comboBox_2,
         )
 
     def _arac_komutlarini_guncelle(self, bagli):
-        self._arac_komutlari_aktif = bool(bagli)
+        aktif = bool(bagli)
+        if self._arac_komutlari_aktif == aktif:
+            return
+
+        self._arac_komutlari_aktif = aktif
         for widget in self._arac_komut_butonlari():
-            widget.setEnabled(self._arac_komutlari_aktif)
-        if not self._arac_komutlari_aktif:
+            if widget.isEnabled() != aktif:
+                widget.setEnabled(aktif)
+        if not aktif:
             self._arac_komutlarini_kilitle()
 
     def _arac_komutlarini_kilitle(self):
-        self.pushButton_4.setStyleSheet(self._komut_buton_stili)
-        self.pushButton_4.setText("ARM LOCKED")
-        self.pushButton_8.setStyleSheet(self._komut_buton_stili)
-        self.pushButton_8.setText("DISARM LOCKED")
+        self._arm_komut_bekliyor = False
+        self._arm_komut_hedef = None
+        self._arm_durum_aday = None
+        arm_durum = ("locked", bool(getattr(self, "_kompakt_duzen_aktif", False)))
+        if self._arm_buton_gorunum_durumu != arm_durum:
+            self._arm_buton_gorunum_durumu = arm_durum
+            self.pushButton_4.setStyleSheet(self._komut_buton_stili)
+            self.pushButton_4.setText("ARM LOCKED")
+        if hasattr(self, "pushButton_8"):
+            self.pushButton_8.hide()
         self.pushButton_7.setStyleSheet(self._acil_stop_stili)
         self.pushButton_7.setText("STOP LOCKED")
         self.pushButton_6.setStyleSheet(self._komut_buton_stili)
@@ -1857,19 +1936,7 @@ class NjordAnaEkran(QMainWindow):
         if not bagli:
             return
 
-        bekliyor = "background-color: #7f8c8d; color: white; font-weight: bold;"
-
-        if d.get("arm_change_pending"):
-            if d.get("requested_arm_state"):
-                self.pushButton_4.setStyleSheet(bekliyor)
-                self.pushButton_4.setText("ARM PENDING...")
-                self._disarmed_butonunu_sabitle()
-            else:
-                self.pushButton_8.setStyleSheet(bekliyor)
-                self.pushButton_8.setText("DISARM PENDING...")
-                self._armed_butonunu_sabitle()
-        else:
-            self._arm_butonlarini_sabitle()
+        self._arm_durumunu_isle(d)
 
         bekliyor_turuncu = (
             "background-color: #e67e22; color: white; font-weight: bold; "
@@ -1892,14 +1959,25 @@ class NjordAnaEkran(QMainWindow):
 
         self._mode_combo_durumunu_guncelle(d, bekliyor_turuncu, onaylandi_mavi)
 
-    def arm_yap(self):
+    def arm_disarm_degistir(self):
         if self._komut_engelli_mi():
+            return
+        if self._arm_komut_bekliyor:
+            self.sistem.log_sinyali.emit("INFO: ARM/DISARM command is waiting for vehicle confirmation.")
+            return
+        if self._son_armed_durum:
+            self._arm_komut_beklemeye_al(False)
+            self.sistem.disarm_yap()
             return
         if self.comboBox_2.findText("HOLD") >= 0:
             blocker = QtCore.QSignalBlocker(self.comboBox_2)
             self.comboBox_2.setCurrentText("HOLD")
             del blocker
+        self._arm_komut_beklemeye_al(True)
         self.sistem.arm_yap()
+
+    def arm_yap(self):
+        self.arm_disarm_degistir()
 
     def disarm_yap(self):
         if self._komut_engelli_mi():
@@ -1926,29 +2004,104 @@ class NjordAnaEkran(QMainWindow):
             self.comboBox_2.setStyleSheet(yeni_stil)
             self._mode_combo_son_stil = yeni_stil
 
-    def _armed_butonunu_sabitle(self):
+    def _arm_durumunu_isle(self, d):
+        armed = bool(d.get("armed"))
+        pending = bool(d.get("arm_change_pending"))
+        simdi = time.time()
+
+        if pending and not self._arm_komut_bekliyor:
+            self._arm_komut_beklemeye_al(bool(d.get("requested_arm_state")))
+
+        if self._arm_komut_bekliyor:
+            hedef_onaylandi = armed == self._arm_komut_hedef and not pending
+            zaman_asimi = simdi - self._arm_komut_baslangic > 8.0
+            if hedef_onaylandi or zaman_asimi:
+                if zaman_asimi and not hedef_onaylandi:
+                    self.sistem.log_sinyali.emit("WARNING: ARM/DISARM confirmation timed out; button unlocked.")
+                self._arm_komut_bekliyor = False
+                self._arm_komut_hedef = None
+                self._arm_durum_aday = None
+                self._arm_toggle_butonunu_guncelle(armed)
+            else:
+                self._arm_buton_bekleme_gorunumu()
+            return
+
+        if armed == self._son_armed_durum:
+            self._arm_durum_aday = None
+            self._arm_toggle_butonunu_guncelle(armed)
+            return
+
+        if self._arm_durum_aday != armed:
+            self._arm_durum_aday = armed
+            self._arm_durum_aday_zamani = simdi
+            return
+
+        if simdi - self._arm_durum_aday_zamani >= 0.8:
+            self._arm_durum_aday = None
+            self._arm_toggle_butonunu_guncelle(armed)
+
+    def _arm_komut_beklemeye_al(self, hedef):
+        self._arm_komut_bekliyor = True
+        self._arm_komut_hedef = bool(hedef)
+        self._arm_komut_baslangic = time.time()
+        self._arm_buton_bekleme_gorunumu()
+
+    def _arm_buton_bekleme_gorunumu(self):
         kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        metin = "ARMING..." if self._arm_komut_hedef else "DISARMING..."
+        durum = ("pending", metin, kompakt)
+        if self._arm_buton_gorunum_durumu == durum:
+            return
+
+        self._arm_buton_gorunum_durumu = durum
+        if self.pushButton_4.isEnabled():
+            self.pushButton_4.setEnabled(False)
         self.pushButton_4.setMinimumSize(88 if kompakt else 180, 36 if kompakt else 50)
         self.pushButton_4.setStyleSheet(
-            "background-color: #2ecc71; color: white; "
-            "font-weight: bold; border-radius: 10px; "
-            "border: 2px solid #27ae60; padding: 8px 18px;"
+            "background-color: #34495e; color: white; "
+            "font-weight: bold; border-radius: 8px; "
+            "border: 2px solid #2c3e50; padding: 8px 18px;"
         )
-        self.pushButton_4.setText("ARMED")
+        self.pushButton_4.setText(metin)
+
+    def _arm_toggle_butonunu_guncelle(self, armed):
+        self._son_armed_durum = bool(armed)
+        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
+        durum = ("armed" if armed else "disarmed", kompakt)
+        if self._arm_buton_gorunum_durumu == durum:
+            return
+
+        self._arm_buton_gorunum_durumu = durum
+        if not self.pushButton_4.isEnabled() and self._arac_komutlari_aktif:
+            self.pushButton_4.setEnabled(True)
+        self.pushButton_4.setMinimumSize(88 if kompakt else 180, 36 if kompakt else 50)
+        if armed:
+            self.pushButton_4.setStyleSheet(
+                "background-color: #e74c3c; color: white; "
+                "font-weight: bold; border-radius: 6px; "
+                "border: 2px solid #c0392b; padding: 8px 18px;"
+            )
+            self.pushButton_4.setText("DISARMED")
+        else:
+            self.pushButton_4.setStyleSheet(
+                "background-color: #2ecc71; color: white; "
+                "font-weight: bold; border-radius: 10px; "
+                "border: 2px solid #27ae60; padding: 8px 18px;"
+            )
+            self.pushButton_4.setText("ARMED")
+
+    def _armed_butonunu_sabitle(self):
+        self._arm_toggle_butonunu_guncelle(True)
 
     def _disarmed_butonunu_sabitle(self):
-        kompakt = bool(getattr(self, "_kompakt_duzen_aktif", False))
-        self.pushButton_8.setMinimumSize(88 if kompakt else 180, 36 if kompakt else 50)
-        self.pushButton_8.setStyleSheet(
-            "background-color: #e74c3c; color: white; "
-            "font-weight: bold; border-radius: 6px; "
-            "border: 2px solid #c0392b; padding: 8px 18px;"
-        )
-        self.pushButton_8.setText("DISARMED")
+        self._arm_toggle_butonunu_guncelle(False)
+        if hasattr(self, "pushButton_8"):
+            self.pushButton_8.hide()
 
     def _arm_butonlarini_sabitle(self):
-        self._armed_butonunu_sabitle()
-        self._disarmed_butonunu_sabitle()
+        self._arm_toggle_butonunu_guncelle(self._son_armed_durum)
+        if hasattr(self, "pushButton_8"):
+            self.pushButton_8.hide()
 
     def _log_dosyasini_hazirla(self):
         try:

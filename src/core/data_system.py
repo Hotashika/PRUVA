@@ -37,7 +37,7 @@ ARDUROVER_MODS = {
 }
 MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
-HEARTBEAT_TIMEOUT = 15.0
+HEARTBEAT_TIMEOUT = 5.0
 ARDUPILOT_FORCE_ARM_MAGIC = 21196
 BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
@@ -60,7 +60,7 @@ def _pil_yuzdesi_voltajdan(voltage):
 class NjordVeriSistemi(QObject):
     veri_guncelle = pyqtSignal(dict)
     log_sinyali = pyqtSignal(str)
-    kamera_sinyali = pyqtSignal(QImage)
+    kamera_sinyali = pyqtSignal(object)
     baglanti_kesildi = pyqtSignal()
     waypoint_guncelle = pyqtSignal(list)
 
@@ -74,6 +74,7 @@ class NjordVeriSistemi(QObject):
         self._connection_started_at = 0.0
         self._heartbeat_seen = False
         self._telemetry_lost_reported = False
+        self._last_read_error_log = 0.0
         self._watchdog_started = False
         self._streams_requested = False
         self._seen_message_types = set()
@@ -91,6 +92,7 @@ class NjordVeriSistemi(QObject):
         self._mission_uploaded_to_pixhawk = False
         self._mission_component_zero = False
         self._mission_waypoints = []
+        self._connection_busy = False
 
         self._durum = {
             "baglanti": False,
@@ -165,6 +167,25 @@ class NjordVeriSistemi(QObject):
             "mesafe": 0.0,
         }
 
+    def _telemetri_kaybi_isle(self, decision_log, physical_disconnect=False):
+        self._mission_uploaded_to_pixhawk = False
+        self._telemetry_lost_reported = True
+        self._set(
+            **self._telemetri_degerlerini_sifirla(),
+            baglanti=not physical_disconnect,
+            link_ok=False,
+            heartbeat_seen=False if physical_disconnect else self._heartbeat_seen,
+            telemetry_lost=not physical_disconnect,
+            armed=False,
+            mod="UNKNOWN",
+            mod_id=-1,
+            active_mission=None,
+            arm_change_pending=False,
+            mode_change_pending=False,
+            requested_mode=-1,
+            decision_log=decision_log,
+        )
+
     def _battery_state(self):
         battery = self._durum.get("battery")
         if not isinstance(battery, dict):
@@ -229,6 +250,15 @@ class NjordVeriSistemi(QObject):
     def _log(self, mesaj):
         print(f"[NJORD] {mesaj}")
         self.log_sinyali.emit(mesaj)
+
+    def _arkaplan_calistir(self, ad, hedef, *args):
+        def calistir():
+            try:
+                hedef(*args)
+            except Exception as exc:
+                self._log(f"ERROR: {ad} failed: {exc}")
+
+        Thread(target=calistir, daemon=True, name=ad).start()
 
     def _command_output(self, command):
         try:
@@ -471,6 +501,15 @@ class NjordVeriSistemi(QObject):
             time.sleep(2.0)
 
     def baglanti_kur(self, tip, baud, port):
+        with self._lock:
+            if self._connection_busy:
+                self._log("INFO: Connection attempt is already running.")
+                return
+            self._connection_busy = True
+
+        self._arkaplan_calistir("MAVLinkConnect", self._baglanti_kur_mavlink, tip, baud, port)
+
+    def _baglanti_kur_mavlink(self, tip, baud, port):
         self._aktif = True
         self._log(f"CONNECTION STARTING: {tip} -> {port}")
 
@@ -527,6 +566,9 @@ class NjordVeriSistemi(QObject):
                 requested_mode=-1,
                 decision_log=f"CONNECTION ERROR: {exc}",
             )
+        finally:
+            with self._lock:
+                self._connection_busy = False
 
     def baglanti_kes(self):
         self._aktif = False
@@ -577,12 +619,14 @@ class NjordVeriSistemi(QObject):
         if grap_video is None:
             self._log("CAMERA WARNING: grap_video was not found. ZED2 stream could not start.")
             self._set(decision_log="Camera could not start: grap_video was not found.")
+            self.kamera_sinyali.emit(None)
             self._camera_started = False
             self._camera_running = False
             return
 
         try:
             self._log("Camera waiting for Jetson IP...")
+            self.kamera_sinyali.emit(None)
             jetson_ip = None
             while self._camera_running:
                 with self._lock:
@@ -597,6 +641,7 @@ class NjordVeriSistemi(QObject):
 
             if not jetson_ip:
                 self._set(decision_log="Camera stopped before Jetson IP was found.")
+                self.kamera_sinyali.emit(None)
                 return
 
             while self._camera_running and not self._is_port_open(jetson_ip, JETSON_VIDEO_PORT):
@@ -617,6 +662,7 @@ class NjordVeriSistemi(QObject):
 
             if not self._camera_running:
                 self._set(decision_log="Camera stopped before video service opened.")
+                self.kamera_sinyali.emit(None)
                 return
 
             self._set(decision_log=f"Camera connecting to Jetson IP: {jetson_ip}")
@@ -638,24 +684,41 @@ class NjordVeriSistemi(QObject):
         except Exception as exc:
             self._log(f"CAMERA THREAD ERROR: {exc}")
             self._set(decision_log=f"Camera error: {exc}")
+            self.kamera_sinyali.emit(None)
 
         finally:
             self._camera_running = False
             self._camera_started = False
+            self.kamera_sinyali.emit(None)
             self._log("CAMERA OFFLINE")
 
     def _dinleme_dongusu(self):
         while self._aktif and self.connection:
             try:
-                msg = self.connection.recv_match(blocking=True, timeout=0.1)
+                msg = self.connection.recv_match(blocking=True, timeout=0.05)
                 if msg:
                     self._islenmis_mesaj(msg)
             except Exception as exc:
-                self._log(f"WARNING: MAVLink read error: {exc}")
+                now = time.time()
+                if now - self._last_read_error_log > 2.0:
+                    self._last_read_error_log = now
+                    self._log(f"WARNING: MAVLink read error, telemetry link lost: {exc}")
+                if not self._telemetry_lost_reported:
+                    self._telemetri_kaybi_isle(
+                        "TELEMETRY DISCONNECTED! MAVLink read failed. Check telemetry cable/radio.",
+                        physical_disconnect=True,
+                    )
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+                self.connection = None
+                break
+                time.sleep(0.1)
 
     def _guvenlik_dongusu(self):
         while self._aktif:
-            time.sleep(1)
+            time.sleep(0.25)
 
             with self._lock:
                 gecen_sure = time.time() - self._last_hb
@@ -666,42 +729,17 @@ class NjordVeriSistemi(QObject):
                 radio_failsafe = bool(self._durum.get("radio_failsafe"))
 
             if baglanti_var and not heartbeat_seen and baslangictan_beri > HEARTBEAT_TIMEOUT:
-                self._mission_uploaded_to_pixhawk = False
                 if not telemetry_lost_reported:
                     self._log(
                         "ERROR: No Pixhawk heartbeat received. Check COM port, baud rate, telemetry radio power, and close Mission Planner."
                     )
-                self._set(
-                    **self._telemetri_degerlerini_sifirla(),
-                    link_ok=False,
-                    heartbeat_seen=False,
-                    telemetry_lost=True,
-                    armed=False,
-                    active_mission=None,
-                    arm_change_pending=False,
-                    mode_change_pending=False,
-                    requested_mode=-1,
-                    decision_log="No Pixhawk heartbeat. Check COM/baud and telemetry radio.",
-                )
-                self._telemetry_lost_reported = True
+                    self._heartbeat_seen = False
+                    self._telemetri_kaybi_isle("No Pixhawk heartbeat. Check COM/baud and telemetry radio.")
             elif baglanti_var and heartbeat_seen and gecen_sure > HEARTBEAT_TIMEOUT:
-                self._mission_uploaded_to_pixhawk = False
                 if not telemetry_lost_reported:
                     self._log("!!! WARNING: HEARTBEAT LOST !!!")
-                self._set(
-                    **self._telemetri_degerlerini_sifirla(),
-                    baglanti=True,
-                    link_ok=False,
-                    heartbeat_seen=True,
-                    telemetry_lost=True,
-                    active_mission=None,
-                    arm_change_pending=False,
-                    mode_change_pending=False,
-                    requested_mode=-1,
-                    decision_log=f"TELEMETRY LOST! No heartbeat for {HEARTBEAT_TIMEOUT:.0f}s.",
-                )
-                self._telemetry_lost_reported = True
-            elif not baglanti_var and gecen_sure <= HEARTBEAT_TIMEOUT and self._last_hb > 0:
+                    self._telemetri_kaybi_isle(f"TELEMETRY LOST! No heartbeat for {HEARTBEAT_TIMEOUT:.0f}s.")
+            elif self.connection and not baglanti_var and gecen_sure <= HEARTBEAT_TIMEOUT and self._last_hb > 0:
                 self._log("Heartbeat restored. Connection is stable.")
                 self._set(baglanti=True, link_ok=True, heartbeat_seen=True, telemetry_lost=False)
             elif radio_failsafe and self._last_radio_failsafe and time.time() - self._last_radio_failsafe > 12.0:
@@ -1038,7 +1076,7 @@ class NjordVeriSistemi(QObject):
         return True
 
     def arm_yap(self):
-        self._arm_yap_mavlink()
+        self._arkaplan_calistir("MAVLinkArm", self._arm_yap_mavlink)
 
     def _arm_yap_mavlink(self):
         with self._lock:
@@ -1065,7 +1103,7 @@ class NjordVeriSistemi(QObject):
             self._log("MAVLink FORCE ARM command sent after HOLD -> waiting for heartbeat confirmation")
 
     def disarm_yap(self):
-        self._disarm_yap_mavlink()
+        self._arkaplan_calistir("MAVLinkDisarm", self._disarm_yap_mavlink)
 
     def _disarm_yap_mavlink(self):
         if self._arm_disarm_gonder(armed=False, force=False, repeat=2):
@@ -1078,7 +1116,7 @@ class NjordVeriSistemi(QObject):
             self._log("MAVLink DISARM command sent -> waiting for heartbeat confirmation")
 
     def mod_ayarla(self, mod_id):
-        self._mod_ayarla_mavlink(mod_id)
+        self._arkaplan_calistir("MAVLinkMode", self._mod_ayarla_mavlink, mod_id)
 
     def mod_ayarla_ad(self, mod_name):
         mode_id = MODE_NAME_TO_ID.get(str(mod_name).upper())
@@ -1113,6 +1151,8 @@ class NjordVeriSistemi(QObject):
         deadline = time.time() + timeout
         beklenen_tipler = set(beklenen_tipler)
         while time.time() < deadline:
+            if not self._mavlink_gorev_baglantisi_hazir_mi():
+                return None
             with self._lock:
                 for index, msg in enumerate(self._mission_messages):
                     if msg.get_type() in beklenen_tipler:
@@ -1373,6 +1413,8 @@ class NjordVeriSistemi(QObject):
                 timeout=2.0,
             )
             if msg is None:
+                if not self._mavlink_gorev_baglantisi_hazir_mi():
+                    raise RuntimeError("Telemetry link was lost during mission upload.")
                 if not gonderilenler:
                     resend_count += 1
                     self._mission_count_gonder(target_system, target_component, len(mission_items))
@@ -1551,6 +1593,8 @@ class NjordVeriSistemi(QObject):
             while time.time() < read_deadline:
                 candidate = self._mission_mesaji_bekle(("MISSION_ITEM_INT", "MISSION_ITEM"), timeout=1.0)
                 if candidate is None:
+                    if not self._mavlink_gorev_baglantisi_hazir_mi():
+                        raise RuntimeError("Telemetry link was lost during mission read-back.")
                     continue
                 if self._mission_item_gecerli_mi(candidate, seq):
                     item_msg = candidate
@@ -1585,6 +1629,9 @@ class NjordVeriSistemi(QObject):
             return str(result)
 
     def gorev_baslat(self, gorev_adi):
+        self._arkaplan_calistir("MAVLinkMissionStart", self._gorev_baslat_mavlink, gorev_adi)
+
+    def _gorev_baslat_mavlink(self, gorev_adi):
         if not self._mavlink_gorev_baglantisi_hazir_mi():
             self._log("ERROR: No healthy Pixhawk MAVLink telemetry connection for mission start. Use CONNECT and wait for heartbeat first.")
             return
@@ -1652,6 +1699,9 @@ class NjordVeriSistemi(QObject):
         while time.time() < deadline:
             msg = self._mission_mesaji_bekle(("PARAM_VALUE",), timeout=0.5)
             if msg is None:
+                if not self._mavlink_gorev_baglantisi_hazir_mi():
+                    self._log("ERROR: SCR_USER1 confirmation stopped because telemetry link was lost.")
+                    return False
                 continue
             received_id = getattr(msg, "param_id", "")
             if isinstance(received_id, bytes):
@@ -1815,7 +1865,7 @@ class NjordVeriSistemi(QObject):
         return self.gorev_waypoints_yukle(txt_yolu, mission_name=mission_name)
 
     def acil_durum(self):
-        self._acil_durum_mavlink()
+        self._arkaplan_calistir("MAVLinkEmergencyStop", self._acil_durum_mavlink)
 
     def _acil_durum_mavlink(self):
         self._rc_stop_gonder()

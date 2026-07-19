@@ -44,11 +44,17 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
 
         cap = cv2.VideoCapture(url)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000)
+        if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
 
         if cap.isOpened():
             break
 
         cap.release()
+        if frame_callback is not None:
+            frame_callback(None)
         if log_callback:
             log_callback("ZED stream failed to open, retrying...")
         else:
@@ -67,11 +73,17 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
 
             ret, frame = cap.read()
             if not ret:
+                if frame_callback is not None:
+                    frame_callback(None)
                 if log_callback:
                     log_callback("Frame was not received, reconnecting...")
                 cap.release()
                 cap = cv2.VideoCapture(url)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000)
+                if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
                 continue
 
             if frame_callback is not None:
@@ -90,7 +102,10 @@ def main(jetson_ip: str, frame_callback=None, log_callback=None, stop_callback=N
                 if cv2.waitKey(1) == 27:
                     break
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
+        if frame_callback is not None:
+            frame_callback(None)
         if frame_callback is None:
             cv2.destroyAllWindows()
 
