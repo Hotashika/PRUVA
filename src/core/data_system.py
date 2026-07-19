@@ -87,6 +87,7 @@ class NjordVeriSistemi(QObject):
         self._last_network_scan = 0.0
         self._last_logged_jetson_ip = None
         self._last_video_wait_log = 0.0
+        self._last_mode_failure_diagnostic = 0.0
         self.backend_client = BackendClient()
         self._mission_id = None
         self._mission_uploaded_to_pixhawk = False
@@ -304,6 +305,22 @@ class NjordVeriSistemi(QObject):
                         return ips[0]
         return None
 
+    def _arp_ip_mac_eslesiyor(self, target_mac, ip):
+        normalized_mac = self._normalize_mac(target_mac)
+        ip = str(ip or "").strip()
+        if not ip:
+            return False
+
+        for command in (["arp", "-a"], ["ip", "neigh"], ["ip", "neighbor"], ["netsh", "interface", "ip", "show", "neighbors"]):
+            result = self._command_output(command)
+            if not result:
+                continue
+            for line in result.splitlines():
+                normalized_line = self._normalize_mac(line)
+                if ip in line and normalized_mac in normalized_line:
+                    return True
+        return False
+
     def _local_ipv4_networks(self):
         system = platform.system().lower()
         if system == "windows":
@@ -443,8 +460,9 @@ class NjordVeriSistemi(QObject):
             return False
 
     def _jetson_reachable(self, ip):
-        # Avoid showing "Wi-Fi active" just because a stale ARP/ping entry exists.
-        # Jetson is treated as active only when a service used by the GUI is open.
+        # Jetson is active only when its known MAC is present and a GUI service is reachable.
+        if not self._valid_ip(ip) or not self._arp_ip_mac_eslesiyor(JETSON_MAC, ip):
+            return False
         backend_port = int(self.backend_client.config.get("backend", {}).get("http_port", JETSON_BACKEND_PORT))
         return self._is_port_open(ip, JETSON_VIDEO_PORT) or self._is_port_open(ip, backend_port)
 
@@ -490,8 +508,6 @@ class NjordVeriSistemi(QObject):
                 if not bulunan_ip and time.time() - self._last_network_scan > NETWORK_SCAN_INTERVAL:
                     self._last_network_scan = time.time()
                     bulunan_ip = self._scan_network_for_mac(JETSON_MAC)
-                    if not bulunan_ip:
-                        bulunan_ip = self._find_video_stream_ip()
 
                 if bulunan_ip and self._jetson_reachable(bulunan_ip):
                     self._set(wifi_aktif=True, jetson_ip=bulunan_ip)
@@ -891,6 +907,8 @@ class NjordVeriSistemi(QObject):
                 else:
                     self._log(f"PIXHAWK: {text}")
                 lower_text = text.lower()
+                if "flight mode change failed" in lower_text:
+                    self._mode_degisim_red_nedenlerini_logla()
                 if "radio failsafe" in lower_text:
                     self._last_radio_failsafe = time.time()
                     self._set(
@@ -1146,6 +1164,58 @@ class NjordVeriSistemi(QObject):
             self._log(f"MAVLink MODE command sent: {mod_name} ({mod_id})")
         except Exception as exc:
             self._log(f"ERROR: MAVLink MODE command failed: {exc}")
+
+    def _mode_degisim_red_nedenlerini_logla(self):
+        simdi = time.time()
+        if simdi - self._last_mode_failure_diagnostic < 1.0:
+            return
+        self._last_mode_failure_diagnostic = simdi
+
+        with self._lock:
+            requested_mode = self._durum.get("requested_mode", -1)
+            requested_mode_name = ARDUROVER_MODS.get(requested_mode, "UNKNOWN")
+            armed = bool(self._durum.get("armed"))
+            gps_fix = int(self._durum.get("gps", 0) or 0)
+            gps_uydu = int(self._durum.get("gps_uydu", 0) or 0)
+            lat = float(self._durum.get("lat", 0.0) or 0.0)
+            lon = float(self._durum.get("lon", 0.0) or 0.0)
+            telemetry_lost = bool(self._durum.get("telemetry_lost"))
+            radio_failsafe = bool(self._durum.get("radio_failsafe"))
+            mission_ok = bool(self._mission_uploaded_to_pixhawk)
+
+        konum_var = abs(lat) >= 0.000001 or abs(lon) >= 0.000001
+        eksikler = []
+        if telemetry_lost:
+            eksikler.append("telemetry link not healthy")
+        if radio_failsafe:
+            eksikler.append("radio failsafe active")
+        if requested_mode_name in ("AUTO", "GUIDED") and not armed:
+            eksikler.append("vehicle is not armed")
+        if requested_mode_name == "AUTO" and not mission_ok:
+            eksikler.append("mission is not verified on Pixhawk")
+        if requested_mode_name in ("AUTO", "GUIDED") and gps_fix < 3:
+            eksikler.append(f"GPS fix is {gps_fix}, needs 3D fix")
+        if requested_mode_name in ("AUTO", "GUIDED") and not konum_var:
+            eksikler.append("vehicle position/home is not valid")
+
+        if eksikler:
+            detay = "; ".join(eksikler)
+            self._log(f"MODE CHANGE BLOCKED CHECK ({requested_mode_name}): {detay}.")
+            self._set(decision_log=f"{requested_mode_name} rejected by Pixhawk: {detay}.")
+        else:
+            self._log(
+                "MODE CHANGE BLOCKED CHECK "
+                f"({requested_mode_name}): GUI prerequisites look OK "
+                f"(armed={armed}, gps_fix={gps_fix}, sats={gps_uydu}, "
+                f"lat={lat:.7f}, lon={lon:.7f}, mission_verified={mission_ok}). "
+                "Check Pixhawk pre-arm/failsafe/EKF messages in Mission Planner."
+            )
+            self._set(
+                decision_log=(
+                    f"{requested_mode_name} rejected by Pixhawk. GUI prerequisites look OK; "
+                    "check Pixhawk EKF, failsafe, and mode settings."
+                )
+            )
 
     def _mission_mesaji_bekle(self, beklenen_tipler, timeout=8.0):
         deadline = time.time() + timeout

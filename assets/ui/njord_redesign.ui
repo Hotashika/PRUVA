@@ -438,7 +438,7 @@
                 </size>
                </property>
                <property name="text">
-                <string>LOAD .WAYPOINTS MISSION</string>
+                <string>LOAD WAYPOINTS MISSION</string>
                </property>
               </widget>
              </item>

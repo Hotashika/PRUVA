@@ -441,17 +441,46 @@ class GorevPlaniEkrani(QDialog):
     def __init__(self, veri_sistemi):
         super().__init__()
         uic.loadUi(os.path.join(UI_KLASOR, "planning.ui"), self)
+        self.setWindowTitle("MISSION LOAD")
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self.veri_sistemi = veri_sistemi
         self.secili_waypoints_yolu = None
         self._yukleme_thread = None
         self._yukleme_worker = None
         self._yukle_buton_metni = self.pushButton_2.text()
         self.tableWidget.setRowCount(0)
-        self.pushButton_4.clicked.connect(self.close)
+        if hasattr(self, "pushButton_4"):
+            self.pushButton_4.hide()
+        if hasattr(self, "pushButton_3"):
+            self.pushButton_3.hide()
         self.pushButton.clicked.connect(self.dosya_sec)
         self.pushButton_2.clicked.connect(self.yukle)
+        self._buton_yazilarini_sigdir()
         self.veri_sistemi.veri_guncelle.connect(self._yukleme_baglanti_durumu_guncelle)
         self._yukleme_baglanti_durumu_guncelle({})
+
+    def _buton_yazilarini_sigdir(self):
+        self.pushButton.setText("CHOOSE WAYPOINTS")
+        self.pushButton_2.setText("UPLOAD WAYPOINTS")
+        self._yukle_buton_metni = self.pushButton_2.text()
+
+        buton_stili = (
+            "QPushButton { color: white; border-radius: 10px; "
+            "font-size: 9pt; font-weight: bold; padding: 8px 10px; }"
+        )
+        self.pushButton.setStyleSheet(
+            buton_stili.replace("QPushButton {", "QPushButton { background-color: #3498db;")
+            + "QPushButton:hover { background-color: #2980b9; }"
+        )
+        self.pushButton_2.setStyleSheet(
+            buton_stili.replace("QPushButton {", "QPushButton { background-color: #27ae60;")
+            + "QPushButton:hover { background-color: #2ecc71; }"
+            + "QPushButton:disabled { background-color: #95a5a6; color: white; }"
+        )
+        self.pushButton.setGeometry(106, self.pushButton.y(), 250, self.pushButton.height())
+        self.pushButton_2.setGeometry(106, self.pushButton_2.y(), 250, self.pushButton_2.height())
+        self.pushButton.setMinimumWidth(250)
+        self.pushButton_2.setMinimumWidth(250)
 
     def _secili_gorev_dosya_adi(self):
         for task_no in range(1, 5):
@@ -468,7 +497,7 @@ class GorevPlaniEkrani(QDialog):
         )
         if yol:
             self.secili_waypoints_yolu = yol
-            self.pushButton.setText(os.path.basename(yol))
+            self.pushButton.setText("WAYPOINTS SELECTED")
             self.veri_sistemi.log_sinyali.emit(f"MISSION WAYPOINTS SELECTED: {os.path.basename(yol)}")
             try:
                 parsed = self.veri_sistemi.gorev_waypoints_onizle(yol)
@@ -496,7 +525,7 @@ class GorevPlaniEkrani(QDialog):
 
         gorev_dosya_adi = self._secili_gorev_dosya_adi()
         self.pushButton_2.setEnabled(False)
-        self.pushButton_2.setText("UPLOADING...")
+        self.pushButton_2.setText("UPLOADING")
         self.veri_sistemi.log_sinyali.emit("MISSION UPLOAD STARTED: UI remains responsive.")
 
         thread = QtCore.QThread(self)
@@ -630,6 +659,7 @@ class NjordAnaEkran(QMainWindow):
         self._kompakt_duzen_aktif = None
         self._restore_boyut_kilitli = False
         self._restore_boyut_kilidi_uygulaniyor = False
+        self._restore_sabit_boyut = None
 
         self.sistem.veri_guncelle.connect(self.tazele)
         self.sistem.log_sinyali.connect(self.log_ekle)
@@ -839,8 +869,9 @@ class NjordAnaEkran(QMainWindow):
             boyut = self.size()
             if boyut.width() <= 0 or boyut.height() <= 0:
                 return
-            self.setMinimumSize(boyut)
-            self.setMaximumSize(boyut)
+            self.setMinimumSize(720, 405)
+            self.setMaximumSize(16777215, 16777215)
+            self._restore_sabit_boyut = QtCore.QSize(boyut)
             self._restore_boyut_kilitli = True
         finally:
             self._restore_boyut_kilidi_uygulaniyor = False
@@ -850,7 +881,22 @@ class NjordAnaEkran(QMainWindow):
             return
         self.setMinimumSize(720, 405)
         self.setMaximumSize(16777215, 16777215)
+        self._restore_sabit_boyut = None
         self._restore_boyut_kilitli = False
+
+    def _restore_boyutunu_gerekirse_sabitle(self):
+        screen = self.screen() or QtWidgets.QApplication.primaryScreen()
+        if screen is None:
+            self._restore_boyutunu_sabitle()
+            return
+
+        alan = screen.availableGeometry()
+        buyuk_pencere = self.width() >= int(alan.width() * 0.85) or self.height() >= int(alan.height() * 0.85)
+        if buyuk_pencere:
+            self._restore_boyut_kilidini_ac()
+            return
+
+        self._restore_boyutunu_sabitle()
 
     def _ekran_duzenini_uygula(self, zorla=False):
         kompakt = self._kompakt_duzen_gerekli_mi()
@@ -1167,7 +1213,7 @@ class NjordAnaEkran(QMainWindow):
         if not hasattr(self, "LBATTERYWH"):
             self.LBATTERYWH = QtWidgets.QLabel("ENERGY LEFT: 0.0 Wh", self.groupBox_3)
 
-        energy_style = "font-size: 12pt; font-weight: bold; color: #0b2239;"
+        energy_style = f"font-size: {9 if kompakt else 10}pt; font-weight: bold; color: #0b2239;"
         self.LBATTERYWH.show()
         self.LBATTERYWH.setStyleSheet(energy_style)
         self.LBATTERYWH.setMinimumHeight(28 if kompakt else 34)
@@ -1449,7 +1495,7 @@ class NjordAnaEkran(QMainWindow):
             if self.isMaximized() or self.isFullScreen():
                 self._restore_boyut_kilidini_ac()
             else:
-                QtCore.QTimer.singleShot(0, self._restore_boyutunu_sabitle)
+                QtCore.QTimer.singleShot(0, self._restore_boyutunu_gerekirse_sabitle)
 
     def kamera_goster(self, image):
         if image is None:
@@ -1522,6 +1568,36 @@ class NjordAnaEkran(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if (
+            getattr(self, "_ui_hazir", False)
+            and self._restore_boyut_kilitli
+            and self._restore_sabit_boyut is not None
+            and not self._restore_boyut_kilidi_uygulaniyor
+            and not self.isMaximized()
+            and not self.isFullScreen()
+            and (
+                event.size().width() > self._restore_sabit_boyut.width() + 80
+                or event.size().height() > self._restore_sabit_boyut.height() + 80
+            )
+        ):
+            self._restore_boyut_kilidini_ac()
+
+        if (
+            getattr(self, "_ui_hazir", False)
+            and self._restore_boyut_kilitli
+            and self._restore_sabit_boyut is not None
+            and not self._restore_boyut_kilidi_uygulaniyor
+            and not self.isMaximized()
+            and not self.isFullScreen()
+            and event.size() != self._restore_sabit_boyut
+        ):
+            self._restore_boyut_kilidi_uygulaniyor = True
+            try:
+                self.resize(self._restore_sabit_boyut)
+            finally:
+                self._restore_boyut_kilidi_uygulaniyor = False
+            return
+
         self._arayuz_olcegini_guncelle()
         if getattr(self, "_ana_harita_katmani", None) is not None and hasattr(self, "LMAINMAP"):
             self._ana_harita_katmani.setGeometry(self.LMAINMAP.rect())
