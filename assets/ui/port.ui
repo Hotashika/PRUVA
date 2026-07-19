@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Dialog</string>
+   <string>CONNECTIVITY</string>
   </property>
   <widget class="QGroupBox" name="groupBox">
    <property name="geometry">
@@ -141,6 +141,9 @@ font-family: &quot;Segoe UI&quot;, Arial; /* Daha modern bir yazı tipi */</stri
    </item>
   </widget>
   <widget class="QPushButton" name="pushButton">
+   <property name="visible">
+    <bool>false</bool>
+   </property>
    <property name="geometry">
     <rect>
      <x>330</x>
@@ -163,6 +166,9 @@ font-weight: bold;            /* Yazıyı daha belirgin yapar */</string>
    </property>
   </widget>
   <widget class="QPushButton" name="pushButton_2">
+   <property name="visible">
+    <bool>false</bool>
+   </property>
    <property name="geometry">
     <rect>
      <x>470</x>

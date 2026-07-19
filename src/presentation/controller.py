@@ -76,12 +76,18 @@ class PortEkrani(QDialog):
         super().__init__()
         uic.loadUi(os.path.join(UI_KLASOR, "port.ui"), self)
         self.veri_sistemi = veri_sistemi
+        self.setWindowTitle("CONNECTIVITY")
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+        if hasattr(self, "pushButton_2"):
+            self.pushButton_2.hide()
         if hasattr(self, "pushButton"):
-            self.pushButton.setText("REFRESH PORT")
-            self.pushButton.clicked.connect(self._varsayilan_portlari_ayarla)
+            self.pushButton.hide()
         self._varsayilan_portlari_ayarla()
-        self.pushButton_2.clicked.connect(self.close)
+        self._baglanti_durumuna_gore_duzenle()
+        if hasattr(self, "pushButton_2"):
+            self.pushButton_2.clicked.connect(self.iptal)
         self.buttonBox.accepted.connect(self.onayla)
+        self.buttonBox.rejected.connect(self.iptal)
 
     def _varsayilan_portlari_ayarla(self):
         if self.comboBox.findText("COM") >= 0:
@@ -169,12 +175,33 @@ class PortEkrani(QDialog):
             return []
 
     def onayla(self):
+        if self.veri_sistemi.durum_al().get("baglanti"):
+            self.veri_sistemi.baglanti_kes()
+            self.accept()
+            return
+
         self.veri_sistemi.baglanti_kur(
             self.comboBox.currentText(),
             self.comboBox_2.currentText(),
             self.lineEdit.text(),
         )
         self.accept()
+
+    def iptal(self):
+        self.reject()
+
+    def _baglanti_durumuna_gore_duzenle(self):
+        ok_button = self.buttonBox.button(QtWidgets.QDialogButtonBox.Ok)
+        cancel_button = self.buttonBox.button(QtWidgets.QDialogButtonBox.Cancel)
+        if cancel_button is not None:
+            cancel_button.setText("Cancel")
+        if ok_button is None:
+            return
+
+        if self.veri_sistemi.durum_al().get("baglanti"):
+            ok_button.setText("DISCONNECT")
+        else:
+            ok_button.setText("CONNECT")
 
 
 class HaritaCizimKatmani(QtWidgets.QWidget):
@@ -584,6 +611,9 @@ class NjordAnaEkran(QMainWindow):
         self._ui_hazir = False
         self._last_camera_frame_time = None
         self._mode_combo_son_stil = None
+        self._mode_combo_son_pixhawk_mod = None
+        self._mode_combo_aday = None
+        self._mode_combo_aday_zamani = 0.0
         self._vessel_status_label = None
         self._cog_label = None
         self._vessel_status_son = None
@@ -598,6 +628,8 @@ class NjordAnaEkran(QMainWindow):
         self._arm_komut_hedef = None
         self._arm_komut_baslangic = 0.0
         self._kompakt_duzen_aktif = None
+        self._restore_boyut_kilitli = False
+        self._restore_boyut_kilidi_uygulaniyor = False
 
         self.sistem.veri_guncelle.connect(self.tazele)
         self.sistem.log_sinyali.connect(self.log_ekle)
@@ -789,12 +821,36 @@ class NjordAnaEkran(QMainWindow):
         self.groupBox_bottom.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def _kompakt_duzen_gerekli_mi(self):
-        screen = QtWidgets.QApplication.primaryScreen()
+        screen = self.screen() or QtWidgets.QApplication.primaryScreen()
         if screen is not None:
             alan = screen.availableGeometry()
             if alan.width() < 1400 or alan.height() < 820:
                 return True
         return self.width() < 1280 or self.height() < 760
+
+    def _restore_boyutunu_sabitle(self):
+        if self.isMaximized() or self.isFullScreen():
+            return
+        if self._restore_boyut_kilidi_uygulaniyor:
+            return
+
+        self._restore_boyut_kilidi_uygulaniyor = True
+        try:
+            boyut = self.size()
+            if boyut.width() <= 0 or boyut.height() <= 0:
+                return
+            self.setMinimumSize(boyut)
+            self.setMaximumSize(boyut)
+            self._restore_boyut_kilitli = True
+        finally:
+            self._restore_boyut_kilidi_uygulaniyor = False
+
+    def _restore_boyut_kilidini_ac(self):
+        if not self._restore_boyut_kilitli:
+            return
+        self.setMinimumSize(720, 405)
+        self.setMaximumSize(16777215, 16777215)
+        self._restore_boyut_kilitli = False
 
     def _ekran_duzenini_uygula(self, zorla=False):
         kompakt = self._kompakt_duzen_gerekli_mi()
@@ -1387,6 +1443,14 @@ class NjordAnaEkran(QMainWindow):
             self._camera_auto_started = True
             self.sistem.kamera_oto_baslat()
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.WindowStateChange and getattr(self, "_ui_hazir", False):
+            if self.isMaximized() or self.isFullScreen():
+                self._restore_boyut_kilidini_ac()
+            else:
+                QtCore.QTimer.singleShot(0, self._restore_boyutunu_sabitle)
+
     def kamera_goster(self, image):
         if image is None:
             self._last_camera_frame_time = None
@@ -1423,6 +1487,11 @@ class NjordAnaEkran(QMainWindow):
         self.label_7.setAlignment(ALIGN_CENTER)
 
     def port_ac(self):
+        durum = self.sistem.durum_al()
+        if durum.get("baglanti") or durum.get("telemetry_lost") or getattr(self.sistem, "connection", None):
+            self.sistem.baglanti_kes()
+            return
+
         pencere = PortEkrani(self.sistem)
         pencere.exec_()
 
@@ -1460,14 +1529,16 @@ class NjordAnaEkran(QMainWindow):
     def _ek_veri_widgetlarini_hazirla(self):
         self._vessel_status_label = getattr(self, "LVESSELSTATUS", None)
         if self._vessel_status_label is None:
-            self._vessel_status_label = QtWidgets.QLabel("DISCONNECTED - No Telemetry", self.groupBox)
+            self._vessel_status_label = QtWidgets.QLabel("OUT OF CONTROL", self.groupBox)
             if self.groupBox.layout() is not None:
                 self.groupBox.layout().addWidget(self._vessel_status_label)
         self._vessel_status_label.setAlignment(ALIGN_CENTER)
         self._vessel_status_label.setMinimumHeight(38)
         self._vessel_status_label.setMaximumHeight(58)
         self._vessel_status_label.setWordWrap(True)
-        self._vessel_status_label.setStyleSheet(self._vessel_status_stili("#2980b9"))
+        self._vessel_status_label.setText("OUT OF CONTROL")
+        self._vessel_status_label.setStyleSheet(self._vessel_status_stili("#c0392b"))
+        self._vessel_status_son = ("OUT OF CONTROL", "#c0392b")
         self._sistem_status_dikey_yap()
 
         self._cog_label = getattr(self, "LCOG", None)
@@ -1731,6 +1802,7 @@ class NjordAnaEkran(QMainWindow):
 
     def _vessel_status_bilgisi(self, d):
         mod = str(d.get("mod", "UNKNOWN") or "UNKNOWN").upper()
+        baglanti = bool(d.get("baglanti"))
         link_ok = bool(d.get("link_ok"))
         heartbeat_seen = bool(d.get("heartbeat_seen"))
         telemetry_lost = bool(d.get("telemetry_lost"))
@@ -1738,31 +1810,30 @@ class NjordAnaEkran(QMainWindow):
         mission_active = bool(d.get("active_mission"))
         system_status = str(d.get("system_status", "") or "").upper()
 
+        if not baglanti:
+            return "OUT OF CONTROL", "#c0392b"
+        if telemetry_lost:
+            return "OUT OF CONTROL", "#c0392b"
+        if not heartbeat_seen or not link_ok:
+            return "OUT OF CONTROL", "#c0392b"
         if d.get("radio_failsafe"):
-            return "OUT OF CONTROL - Radio Failsafe", "#c0392b"
+            return "OUT OF CONTROL", "#c0392b"
         if (
             mod == "EMERGENCY"
             or "FAILSAFE" in system_status
             or "CRITICAL" in system_status
             or "EMERGENCY" in system_status
         ):
-            return "OUT OF CONTROL - Communication Lost", "#c0392b"
-        if not d.get("baglanti"):
-            return "DISCONNECTED - No Telemetry", "#7f8c8d"
-        if telemetry_lost or (heartbeat_seen and not link_ok):
-            return "OUT OF CONTROL - Communication Lost", "#c0392b"
-        if not heartbeat_seen and not link_ok:
-            return "CONNECTING - Waiting for Heartbeat", "#7f8c8d"
+            return "OUT OF CONTROL", "#c0392b"
+        if not armed:
+            return "STANDBY", "#2980b9"
         if mod in ("AUTO", "GUIDED"):
-            detail = "Executing Mission" if mission_active else "Autonomous Mode Active"
-            return f"AUTONOMOUS - {detail}", "#27ae60"
+            return "AUTONOMOUS", "#27ae60"
         if mod in ("MANUAL", "HOLD", "STEERING", "LEARNING", "ACRO", "LOITER"):
-            if armed:
-                return "REMOTE CONTROL - Operator Driving", "#f1c40f"
-            return "STANDBY - Waiting for Mission", "#2980b9"
+            return "REMOTE CONTROL", "#f1c40f"
         if armed:
-            return f"REMOTE CONTROL - {mod}", "#f1c40f"
-        return "STANDBY - Waiting for Mission", "#2980b9"
+            return "REMOTE CONTROL", "#f1c40f"
+        return "STANDBY", "#2980b9"
 
     def _vessel_status_guncelle(self, d):
         if self._vessel_status_label is None:
@@ -1775,7 +1846,10 @@ class NjordAnaEkran(QMainWindow):
             self._vessel_status_aday = None
             return
 
-        if self._vessel_status_son is not None:
+        onceki_status = self._vessel_status_son[0] if self._vessel_status_son else ""
+        no_telemetryden_cikis = onceki_status == "OUT OF CONTROL" and status != onceki_status
+
+        if self._vessel_status_son is not None and not no_telemetryden_cikis:
             if self._vessel_status_aday != hedef:
                 self._vessel_status_aday = hedef
                 self._vessel_status_aday_zamani = simdi
@@ -1936,6 +2010,7 @@ class NjordAnaEkran(QMainWindow):
         if not bagli:
             return
 
+        self._mode_combo_pixhawk_ile_esitle(d)
         self._arm_durumunu_isle(d)
 
         bekliyor_turuncu = (
@@ -1993,6 +2068,44 @@ class NjordAnaEkran(QMainWindow):
         if not self._ui_hazir or not mod_adi or self._komut_engelli_mi():
             return
         self.sistem.mod_ayarla_ad(mod_adi)
+
+    def _mode_combo_pixhawk_ile_esitle(self, d):
+        if d.get("mode_change_pending"):
+            return
+
+        mod = str(d.get("mod", "") or "").upper()
+        if not mod or mod == "UNKNOWN":
+            return
+
+        simdi = time.time()
+        if mod == self._mode_combo_son_pixhawk_mod:
+            self._mode_combo_aday = None
+            return
+
+        if self._mode_combo_aday != mod:
+            self._mode_combo_aday = mod
+            self._mode_combo_aday_zamani = simdi
+            return
+
+        if simdi - self._mode_combo_aday_zamani < 1.0:
+            return
+
+        index = self.comboBox_2.findText(mod)
+        if index < 0:
+            self.comboBox_2.addItem(mod)
+            index = self.comboBox_2.findText(mod)
+        if index < 0:
+            return
+        if self.comboBox_2.currentIndex() == index:
+            self._mode_combo_son_pixhawk_mod = mod
+            self._mode_combo_aday = None
+            return
+
+        blocker = QtCore.QSignalBlocker(self.comboBox_2)
+        self.comboBox_2.setCurrentIndex(index)
+        del blocker
+        self._mode_combo_son_pixhawk_mod = mod
+        self._mode_combo_aday = None
 
     def _mode_combo_durumunu_guncelle(self, d, bekliyor_stil, aktif_stil):
         if d.get("mode_change_pending"):
