@@ -79,7 +79,7 @@ class NjordVeriSistemi(QObject):
         self._streams_requested = False
         self._seen_message_types = set()
         self._mission_messages = []
-        self._last_position_for_cog = None
+        self._filtered_cog = None
         self._last_radio_failsafe = 0.0
 
         self._camera_started = False
@@ -154,7 +154,7 @@ class NjordVeriSistemi(QObject):
         return time.time() - son_hb <= HEARTBEAT_TIMEOUT
 
     def _telemetri_degerlerini_sifirla(self):
-        self._last_position_for_cog = None
+        self._filtered_cog = None
         return {
             "hiz": 0.0,
             "yaw": 0.0,
@@ -821,7 +821,11 @@ class NjordVeriSistemi(QObject):
                 groundspeed = 0.0
             if not math.isfinite(groundspeed) or groundspeed < 0.0:
                 groundspeed = 0.0
-            self._set(yaw=msg.heading, hiz=groundspeed)
+            updates = {"yaw": msg.heading, "hiz": groundspeed}
+            if groundspeed < 0.30:
+                self._filtered_cog = None
+                updates["cog"] = 0.0
+            self._set(**updates)
 
         elif msg_type == "ATTITUDE":
             self._set(
@@ -855,13 +859,10 @@ class NjordVeriSistemi(QObject):
         elif msg_type == "GLOBAL_POSITION_INT":
             lat = msg.lat / 1e7
             lon = msg.lon / 1e7
-            cog = self._cog_hesapla(lat, lon)
             updates = {"lat": lat, "lon": lon}
             hdg = getattr(msg, "hdg", 65535)
             if hdg != 65535:
                 updates["yaw"] = float(hdg) / 100.0
-            if cog is not None:
-                updates["cog"] = cog
             self._set(**updates)
 
         elif msg_type == "GPS_RAW_INT":
@@ -870,8 +871,17 @@ class NjordVeriSistemi(QObject):
                 "gps_uydu": msg.satellites_visible,
             }
             cog_raw = getattr(msg, "cog", 65535)
-            if cog_raw != 65535:
-                updates["cog"] = float(cog_raw) / 100.0
+            velocity_raw = getattr(msg, "vel", 65535)
+            if velocity_raw != 65535:
+                speed = float(velocity_raw) / 100.0
+            else:
+                with self._lock:
+                    speed = float(self._durum.get("hiz", 0.0) or 0.0)
+            if cog_raw != 65535 and int(getattr(msg, "fix_type", 0)) >= 2:
+                updates["cog"] = self._cog_filtrele(float(cog_raw) / 100.0, speed)
+            elif speed < 0.30:
+                self._filtered_cog = None
+                updates["cog"] = 0.0
             self._set(**updates)
 
         elif msg_type == "SYS_STATUS":
@@ -959,25 +969,22 @@ class NjordVeriSistemi(QObject):
         except Exception as exc:
             self._log(f"ERROR: MAVLink stream request failed: {exc}")
 
-    def _cog_hesapla(self, lat, lon):
-        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
-            return None
+    def _cog_filtrele(self, candidate, speed):
+        """COG'u dururken sıfırla, hareket halinde dairesel olarak yumuşat."""
+        if not math.isfinite(speed) or speed < 0.30:
+            self._filtered_cog = None
+            return 0.0
 
-        onceki = self._last_position_for_cog
-        self._last_position_for_cog = (lat, lon)
-        if onceki is None:
-            return None
+        candidate = float(candidate) % 360.0
+        if self._filtered_cog is None:
+            self._filtered_cog = candidate
+            return candidate
 
-        onceki_lat, onceki_lon = onceki
-        if abs(lat - onceki_lat) < 0.000002 and abs(lon - onceki_lon) < 0.000002:
-            return None
-
-        lat1 = math.radians(onceki_lat)
-        lat2 = math.radians(lat)
-        dlon = math.radians(lon - onceki_lon)
-        y = math.sin(dlon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-        return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+        # Normal ortalama 359° ile 1°'yi yanlışlıkla 180° yapar. En kısa açı
+        # farkını kullanmak kuzey geçişlerinde de doğru sonuç verir.
+        difference = (candidate - self._filtered_cog + 180.0) % 360.0 - 180.0
+        self._filtered_cog = (self._filtered_cog + difference * 0.25) % 360.0
+        return self._filtered_cog
 
     def _mesaj_araliklarini_iste(self, target_system, target_component):
         mesajlar = {

@@ -1,5 +1,6 @@
 import os
 import time
+import html
 from datetime import datetime
 from pathlib import Path
 
@@ -205,11 +206,15 @@ class PortEkrani(QDialog):
 
 
 class HaritaCizimKatmani(QtWidgets.QWidget):
-    def __init__(self, parent=None):
+    TRAIL_MIN_DELTA = 0.000005
+    COG_MIN_SPEED_M_S = 0.30
+
+    def __init__(self, parent=None, map_pixmap=None):
         super().__init__(parent)
         self._vehicle = None
         self._waypoints = []
         self._trail = []
+        self._map_pixmap = map_pixmap if map_pixmap is not None else QPixmap()
         self._affine_x, self._affine_y = self._kalibrasyon_hazirla()
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -218,9 +223,11 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         self._vehicle = vehicle
         if self._valid_coordinate(vehicle):
             son = self._trail[-1] if self._trail else None
-            if not son or abs(float(son["lat"]) - float(vehicle["lat"])) > 0.000002 or abs(float(son["lon"]) - float(vehicle["lon"])) > 0.000002:
+            if not son or abs(float(son["lat"]) - float(vehicle["lat"])) > self.TRAIL_MIN_DELTA or abs(float(son["lon"]) - float(vehicle["lon"])) > self.TRAIL_MIN_DELTA:
                 self._trail.append({"lat": float(vehicle["lat"]), "lon": float(vehicle["lon"])})
-                self._trail = self._trail[-120:]
+                # Keep enough history to show the complete competition run,
+                # rather than only the last short segment of the vessel path.
+                self._trail = self._trail[-2000:]
         self.update()
 
     def set_waypoints(self, waypoints):
@@ -230,6 +237,7 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        self._harita_arka_plani_ciz(painter)
         self._arka_plan_efekti_ciz(painter)
 
         points = self._valid_points()
@@ -248,6 +256,8 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         trail_pixels = [self._to_pixel(p["lat"], p["lon"]) for p in self._trail]
         if len(trail_pixels) > 1:
             self._trail_ciz(painter, trail_pixels)
+        self._trail_durumu_ciz(painter)
+        self._aciklama_ciz(painter)
 
         for index, (wp, point) in enumerate(waypoint_pixels, start=1):
             self._waypoint_ciz(painter, point, wp.get("name") or f"WP{index}", index)
@@ -259,6 +269,7 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
                 point,
                 self._vehicle.get("yaw", 0.0),
                 self._vehicle.get("cog"),
+                self._vehicle.get("speed", 0.0),
             )
 
     def _valid_points(self):
@@ -276,11 +287,47 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         return abs(lat) > 0.000001 or abs(lon) > 0.000001
 
     def _to_pixel(self, lat, lon):
+        native_x, native_y = self._to_native(lat, lon)
+        view = self._gorunum_rect()
+        scale_x = max(self.width(), 1) / max(view.width(), 1.0)
+        scale_y = max(self.height(), 1) / max(view.height(), 1.0)
+        return QPointF((native_x - view.left()) * scale_x, (native_y - view.top()) * scale_y)
+
+    def _to_native(self, lat, lon):
         native_x = self._affine_x[0] * float(lat) + self._affine_x[1] * float(lon) + self._affine_x[2]
         native_y = self._affine_y[0] * float(lat) + self._affine_y[1] * float(lon) + self._affine_y[2]
-        scale_x = max(self.width(), 1) / MAP_IMAGE_SIZE[0]
-        scale_y = max(self.height(), 1) / MAP_IMAGE_SIZE[1]
-        return QPointF(native_x * scale_x, native_y * scale_y)
+        return native_x, native_y
+
+    def _gorunum_rect(self):
+        native_points = [self._to_native(p["lat"], p["lon"]) for p in self._valid_points()]
+        native_points.extend(self._to_native(p["lat"], p["lon"]) for p in self._trail)
+        if not native_points:
+            return QtCore.QRectF(0.0, 0.0, *MAP_IMAGE_SIZE)
+
+        xs = [p[0] for p in native_points]
+        ys = [p[1] for p in native_points]
+        min_width = 220.0
+        content_width = max(max(xs) - min(xs) + 90.0, min_width)
+        content_height = max(max(ys) - min(ys) + 90.0, min_width)
+        target_ratio = max(self.width(), 1) / max(self.height(), 1)
+        if content_width / content_height < target_ratio:
+            content_width = content_height * target_ratio
+        else:
+            content_height = content_width / target_ratio
+
+        content_width = min(content_width, float(MAP_IMAGE_SIZE[0]))
+        content_height = min(content_height, float(MAP_IMAGE_SIZE[1]))
+        center_x = (min(xs) + max(xs)) / 2.0
+        center_y = (min(ys) + max(ys)) / 2.0
+        left = min(max(center_x - content_width / 2.0, 0.0), MAP_IMAGE_SIZE[0] - content_width)
+        top = min(max(center_y - content_height / 2.0, 0.0), MAP_IMAGE_SIZE[1] - content_height)
+        return QtCore.QRectF(left, top, content_width, content_height)
+
+    def _harita_arka_plani_ciz(self, painter):
+        if self._map_pixmap.isNull():
+            painter.fillRect(self.rect(), QColor(27, 42, 52))
+            return
+        painter.drawPixmap(QtCore.QRectF(self.rect()), self._map_pixmap, self._gorunum_rect())
 
     def _kalibrasyon_hazirla(self):
         rows = [(p["lat"], p["lon"], 1.0) for p in MAP_CALIBRATION_POINTS]
@@ -337,9 +384,44 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
             painter.drawLine(start, end)
 
     def _trail_ciz(self, painter, points):
-        painter.setPen(QPen(QColor(0, 210, 255, 185), 2))
+        # Dark outline keeps the cyan trail readable on both water and land.
+        painter.setPen(QPen(QColor(0, 20, 28, 210), 7))
         for start, end in zip(points, points[1:]):
             painter.drawLine(start, end)
+        painter.setPen(QPen(QColor(0, 235, 255, 245), 4))
+        for start, end in zip(points, points[1:]):
+            painter.drawLine(start, end)
+        painter.setPen(QPen(QColor(255, 255, 255, 235), 1))
+        painter.setBrush(QBrush(QColor(0, 235, 255, 245)))
+        for point in points[::4]:
+            painter.drawEllipse(point, 3, 3)
+
+    def _trail_durumu_ciz(self, painter):
+        count = len(self._trail)
+        status = "WAITING FOR MOVEMENT" if count < 2 else f"ACTIVE - {count} POINTS"
+        width = 190 if count < 2 else 160
+        rect = QtCore.QRect(12, 34, width, 25)
+        painter.setPen(QPen(QColor(0, 235, 255, 220), 1))
+        painter.setBrush(QBrush(QColor(4, 24, 31, 210)))
+        painter.drawRoundedRect(rect, 5, 5)
+        painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        painter.drawText(rect, Qt.AlignCenter, f"TRAIL: {status}")
+
+    def _aciklama_ciz(self, painter):
+        width = 176
+        rect = QtCore.QRect(max(self.width() - width - 12, 12), 10, width, 48)
+        painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
+        painter.setBrush(QBrush(QColor(4, 24, 31, 210)))
+        painter.drawRoundedRect(rect, 5, 5)
+        painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        painter.setPen(QPen(QColor(255, 193, 7), 4))
+        painter.drawLine(rect.left() + 10, rect.top() + 15, rect.left() + 38, rect.top() + 15)
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.drawText(rect.left() + 46, rect.top() + 19, "IDEAL ROUTE")
+        painter.setPen(QPen(QColor(0, 235, 255), 4))
+        painter.drawLine(rect.left() + 10, rect.top() + 34, rect.left() + 38, rect.top() + 34)
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.drawText(rect.left() + 46, rect.top() + 38, "ACTUAL TRAIL")
 
     def _waypoint_ciz(self, painter, point, name, index):
         painter.setPen(QPen(QColor(16, 96, 62), 2))
@@ -354,7 +436,7 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
         painter.drawText(int(point.x() - 4), int(point.y() + 4), str(index))
 
-    def _arac_ciz(self, painter, point, yaw, cog=None):
+    def _arac_ciz(self, painter, point, yaw, cog=None, speed=0.0):
         try:
             yaw_deg = float(yaw)
         except (TypeError, ValueError):
@@ -362,6 +444,12 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         try:
             cog_deg = float(cog)
         except (TypeError, ValueError):
+            cog_deg = None
+        try:
+            speed_m_s = float(speed)
+        except (TypeError, ValueError):
+            speed_m_s = 0.0
+        if speed_m_s < self.COG_MIN_SPEED_M_S:
             cog_deg = None
 
         painter.save()
@@ -412,6 +500,9 @@ class HaritaCizimKatmani(QtWidgets.QWidget):
         if cog_deg is not None:
             painter.setPen(QPen(QColor(255, 193, 7), 1))
             painter.drawText(int(point.x() + 20), int(point.y() + 19), f"COG {cog_deg:.0f} deg")
+        else:
+            painter.setPen(QPen(QColor(220, 220, 220), 1))
+            painter.drawText(int(point.x() + 20), int(point.y() + 19), "COG 0 deg (stopped)")
 
 
 class GorevYuklemeWorker(QtCore.QObject):
@@ -796,6 +887,7 @@ class NjordAnaEkran(QMainWindow):
         view.centerOn(genislik / 2, yukseklik / 2)
         QtCore.QTimer.singleShot(0, self._mission_yuksekligini_decision_hizasina_ayarla)
         QtCore.QTimer.singleShot(0, self._safety_yuksekligini_harita_hizasina_ayarla)
+        QtCore.QTimer.singleShot(0, self._overview_yuksekligini_status_log_hizasina_ayarla)
 
     def _mission_yuksekligini_decision_hizasina_ayarla(self):
         if not all(hasattr(self, ad) for ad in ("groupBox_6", "groupBox_7", "groupBox_8")):
@@ -824,6 +916,7 @@ class NjordAnaEkran(QMainWindow):
         self.groupBox_7.setMinimumHeight(secim_yuksekligi)
         self.groupBox_7.setMaximumHeight(secim_yuksekligi)
         self.groupBox_7.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        QtCore.QTimer.singleShot(0, self._overview_yuksekligini_status_log_hizasina_ayarla)
 
     def _safety_yuksekligini_harita_hizasina_ayarla(self):
         if not all(hasattr(self, ad) for ad in ("groupBox_bottom", "groupBox_mapMain")):
@@ -849,6 +942,31 @@ class NjordAnaEkran(QMainWindow):
         self.groupBox_bottom.setMinimumHeight(hedef_yukseklik)
         self.groupBox_bottom.setMaximumHeight(hedef_yukseklik)
         self.groupBox_bottom.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+    def _overview_yuksekligini_status_log_hizasina_ayarla(self):
+        if not all(hasattr(self, ad) for ad in ("groupBox_system_overview", "groupBox_5")):
+            return
+        icerik = getattr(self, "_olcekli_arayuz_icerik", None)
+        if icerik is None:
+            return
+
+        overview_top = self.groupBox_system_overview.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        log_top = self.groupBox_5.mapTo(icerik, QtCore.QPoint(0, 0)).y()
+        log_bottom = log_top + self.groupBox_5.height()
+        hedef_yukseklik = int(log_bottom - overview_top)
+        if hedef_yukseklik < 190:
+            return
+
+        self.groupBox_system_overview.setMinimumHeight(hedef_yukseklik)
+        self.groupBox_system_overview.setMaximumHeight(hedef_yukseklik)
+        self.groupBox_system_overview.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+
+        satir_yuksekligi = max(34, min(44, int((hedef_yukseklik - 58) / 5)))
+        for label in getattr(self, "_overview_values", {}).values():
+            label.setMinimumHeight(satir_yuksekligi)
+            label.setMaximumHeight(satir_yuksekligi)
 
     def _kompakt_duzen_gerekli_mi(self):
         screen = self.screen() or QtWidgets.QApplication.primaryScreen()
@@ -1551,13 +1669,15 @@ class NjordAnaEkran(QMainWindow):
             return
 
         map_path = os.path.join(GORSEL_KLASORU, MAP_IMAGE_FILE)
+        map_pixmap = QPixmap()
         if os.path.exists(map_path):
-            self.LMAINMAP.setPixmap(QPixmap(map_path))
-            self.LMAINMAP.setScaledContents(True)
+            map_pixmap = QPixmap(map_path)
+        self.LMAINMAP.setPixmap(QPixmap())
+        self.LMAINMAP.setScaledContents(False)
         self.LMAINMAP.setText("")
         self.LMAINMAP.setStyleSheet("background-color: #1b2a34; border: 1px solid #7fb3d5;")
 
-        self._ana_harita_katmani = HaritaCizimKatmani(self.LMAINMAP)
+        self._ana_harita_katmani = HaritaCizimKatmani(self.LMAINMAP, map_pixmap)
         self._ana_harita_katmani.setGeometry(self.LMAINMAP.rect())
         self._ana_harita_katmani.raise_()
         self._ana_harita_katmani.set_waypoints(self.sistem.gorev_noktalarini_al())
@@ -1565,6 +1685,8 @@ class NjordAnaEkran(QMainWindow):
     def _ana_harita_waypoint_guncelle(self, waypoints):
         if self._ana_harita_katmani is not None:
             self._ana_harita_katmani.set_waypoints(waypoints)
+        if hasattr(self, "_overview_values"):
+            self._system_overview_guncelle(self.sistem.durum_al())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1616,6 +1738,7 @@ class NjordAnaEkran(QMainWindow):
         self._vessel_status_label.setStyleSheet(self._vessel_status_stili("#c0392b"))
         self._vessel_status_son = ("OUT OF CONTROL", "#c0392b")
         self._sistem_status_dikey_yap()
+        self._system_overview_hazirla()
 
         self._cog_label = getattr(self, "LCOG", None)
         if self._cog_label is None:
@@ -1642,6 +1765,16 @@ class NjordAnaEkran(QMainWindow):
             widget = getattr(self, ad, None)
             if widget is not None:
                 widget.setStyleSheet(map_status_stili)
+                widget.setMinimumHeight(34)
+                widget.setMaximumHeight(34)
+                widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        map_layout = getattr(self, "verticalLayout_map", None)
+        if map_layout is not None:
+            # The map consumes all spare vertical space; the three telemetry
+            # indicators remain a compact status strip below it.
+            map_layout.setStretch(0, 1)
+            map_layout.setStretch(1, 0)
 
         if hasattr(self, "label_20"):
             self.label_20.setStyleSheet("font-size: 11pt; font-weight: bold; color: #0b2239;")
@@ -1654,6 +1787,117 @@ class NjordAnaEkran(QMainWindow):
             "Collision risk: --\n\n"
             "Target vessel distance: --"
         )
+
+    def _system_overview_hazirla(self):
+        if not hasattr(self, "middlePanel") or self.middlePanel.layout() is None:
+            return
+
+        self.groupBox_system_overview = QtWidgets.QGroupBox("SYSTEM OVERVIEW", self.middlePanel)
+        overview_layout = QtWidgets.QGridLayout(self.groupBox_system_overview)
+        overview_layout.setContentsMargins(9, 24, 9, 9)
+        overview_layout.setVerticalSpacing(5)
+        overview_layout.setColumnStretch(0, 1)
+
+        rows = (
+            ("connection", "VEHICLE CONNECTION"),
+            ("arm", "ARM STATUS"),
+            ("mode", "OPERATING MODE"),
+            ("waypoints", "SELECTED TASK"),
+            ("mission", "MISSION STATUS"),
+        )
+        self._overview_values = {}
+        self._overview_titles = {}
+        for row, (key, title) in enumerate(rows):
+            value_label = QtWidgets.QLabel(f"{title}: --", self.groupBox_system_overview)
+            value_label.setAlignment(Qt.AlignCenter)
+            value_label.setWordWrap(True)
+            value_label.setMinimumHeight(36)
+            value_label.setMaximumHeight(36)
+            value_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            overview_layout.addWidget(value_label, row, 0)
+            self._overview_values[key] = value_label
+            self._overview_titles[key] = title
+
+        middle_layout = self.middlePanel.layout()
+        self._layouttan_cikar(self.groupBox_system_overview)
+        mission_index = middle_layout.indexOf(getattr(self, "groupBox_6", None))
+        middle_layout.insertWidget(mission_index + 1 if mission_index >= 0 else middle_layout.count(), self.groupBox_system_overview)
+        middle_layout.setSpacing(8)
+        middle_layout.setStretchFactor(self.groupBox_system_overview, 0)
+        self.groupBox_system_overview.setMinimumHeight(230)
+        self.groupBox_system_overview.setMaximumHeight(230)
+        self.groupBox_system_overview.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Fixed,
+        )
+        self._system_overview_guncelle(self.sistem.durum_al())
+
+    def _overview_degerini_ayarla(self, key, text, color):
+        label = getattr(self, "_overview_values", {}).get(key)
+        if label is None:
+            return
+        title = getattr(self, "_overview_titles", {}).get(key, key.upper())
+        safe_title = html.escape(str(title))
+        safe_text = html.escape(str(text))
+        label.setText(
+            f"<span style='color:#111111; font-weight:700;'>{safe_title}:</span> "
+            f"<span style='color:{color}; font-weight:900;'>{safe_text}</span>"
+        )
+        label.setStyleSheet(
+            "QLabel { background-color: #f8fcff; color: #111111; border: 1px solid %s; "
+            "border-radius: 6px; font-size: 9pt; font-weight: 800; padding: 2px 6px; }"
+            % color
+        )
+
+    def _system_overview_guncelle(self, d):
+        connected = bool(d.get("baglanti") and d.get("link_ok") and not d.get("telemetry_lost"))
+        armed = bool(d.get("armed"))
+        mode = str(d.get("mod", "UNKNOWN") or "UNKNOWN").upper()
+        mission = str(d.get("active_mission") or "--")
+        waypoint_count = len(self.sistem.gorev_noktalarini_al())
+
+        task_name = mission
+        if mission.upper() in ("M1", "M2", "M3", "M4"):
+            task_name = f"TASK {mission[-1]}"
+        elif mission == "--":
+            selected_radios = (
+                (getattr(self, "radioButton", None), "TASK 1"),
+                (getattr(self, "radioButton_2", None), "TASK 2"),
+                (getattr(self, "radioButton_3", None), "TASK 3"),
+                (getattr(self, "radioButton_4", None), "TASK 4"),
+            )
+            task_name = next(
+                (name for radio, name in selected_radios if radio is not None and radio.isChecked()),
+                "NOT SELECTED",
+            )
+
+        self._overview_degerini_ayarla(
+            "connection", "OK" if connected else "NO LINK", "#1e8449" if connected else "#c0392b"
+        )
+        self._overview_degerini_ayarla(
+            "arm",
+            "ARMED" if armed else "DISARMED",
+            "#c0392b" if armed else "#2980b9",
+        )
+        mode_color = "#1e8449" if mode in ("AUTO", "GUIDED") else "#b9770e" if connected else "#7f8c8d"
+        self._overview_degerini_ayarla("mode", mode, mode_color)
+        self._overview_degerini_ayarla(
+            "waypoints", f"{task_name} / {waypoint_count} WP" if waypoint_count else task_name,
+            "#1e8449" if waypoint_count and task_name != "NOT SELECTED" else "#7f8c8d",
+        )
+
+        if not connected:
+            mission_status, mission_color = "WAITING FOR VEHICLE", "#c0392b"
+        elif not waypoint_count:
+            mission_status, mission_color = "NOT LOADED", "#b9770e"
+        elif armed and mode in ("AUTO", "GUIDED") and mission != "--":
+            mission_status, mission_color = "IN PROGRESS", "#1e8449"
+        elif mission != "--":
+            mission_status, mission_color = "READY", "#2980b9"
+        else:
+            mission_status, mission_color = "LOADED", "#2980b9"
+        self._overview_degerini_ayarla("mission", mission_status, mission_color)
+
         self.label_8.setText("Mission state: Waiting for telemetry")
 
     def _vessel_status_stili(self, renk):
@@ -1805,6 +2049,12 @@ class NjordAnaEkran(QMainWindow):
                 orta_layout.setStretchFactor(self.groupBox_6, 0)
                 self.groupBox_6.setMaximumHeight(445 if kompakt else 485)
                 self.groupBox_6.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+            if hasattr(self, "groupBox_system_overview"):
+                orta_layout.setStretchFactor(self.groupBox_system_overview, 0)
+                self.groupBox_system_overview.setSizePolicy(
+                    QtWidgets.QSizePolicy.Expanding,
+                    QtWidgets.QSizePolicy.Fixed,
+                )
             if hasattr(self, "pushButton_wifi"):
                 orta_layout.setStretchFactor(self.pushButton_wifi, 0)
             if hasattr(self, "pushButton_7"):
@@ -2014,7 +2264,11 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton_5.setText(f"ROLL: {d.get('roll', 0.0):.1f}°")
         self.pushButton_9.setText(f"PITCH: {d.get('pitch', 0.0):.1f}°")
         if self._cog_label is not None:
-            self._cog_label.setText(f"COG: {float(d.get('cog', 0.0) or 0.0):.1f}°")
+            speed = float(d.get("hiz", 0.0) or 0.0)
+            if speed >= HaritaCizimKatmani.COG_MIN_SPEED_M_S:
+                self._cog_label.setText(f"COG: {float(d.get('cog', 0.0) or 0.0):.1f}°")
+            else:
+                self._cog_label.setText("COG: 0.0°")
 
         self.lcdNumber_3.display(d.get("hiz", 0.0))
         self.pushButton_11.setText(str(d.get("lat", 0.0)))
@@ -2038,6 +2292,7 @@ class NjordAnaEkran(QMainWindow):
         self._batarya_guncelle(d)
         self.textEdit.setPlainText(self._decision_metni(d))
         self._vessel_status_guncelle(d)
+        self._system_overview_guncelle(d)
         self.label_8.setText(d.get("decision_log", "Waiting for mission data..."))
 
         bagli = self._arac_bagli_mi(d)
