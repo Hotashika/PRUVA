@@ -331,7 +331,7 @@
              <item row="2" column="0">
               <widget class="QPushButton" name="BTNYAW">
                <property name="text">
-                <string>YAW: 0.0°</string>
+                <string>HEADING: 0.0°</string>
                </property>
               </widget>
              </item>
@@ -536,7 +536,7 @@
           <item>
            <widget class="QGroupBox" name="groupBox_8">
             <property name="title">
-             <string>DECISION LOGIC / COLREG</string>
+              <string>DECISION LOGIC</string>
             </property>
             <layout class="QGridLayout" name="gridLayout_decision">
              <item row="0" column="0">
@@ -570,12 +570,8 @@
                 <bool>true</bool>
                </property>
                <property name="plainText">
-                <string>Mission: --
-Status: OUT OF CONTROL
-Distance to next WP: 0.0 m
-COLREG rule: --
-Decision: --
-Reason: --</string>
+                <string>DETECTIONS: 0 | FRAME: --
+Status: No active detection</string>
                </property>
               </widget>
              </item>

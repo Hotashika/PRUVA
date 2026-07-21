@@ -1,6 +1,7 @@
 import copy
 import ipaddress
 import math
+import os
 import platform
 import re
 import socket
@@ -12,8 +13,15 @@ from threading import Lock, Thread
 
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QImage
+
+# MAVLink TUNNEL has message id 385 and is only available in MAVLink 2.
+# This must be set before importing pymavlink's generated dialect.
+os.environ.setdefault("MAVLINK20", "1")
+
 from pymavlink import mavutil
 
+from .decision_protocol import DECISION_PAYLOAD_TYPE, decode_decision_payload
+from .detection_protocol import DETECTION_PAYLOAD_TYPE, decode_detection_payload
 from ..services.backend_client import BackendClient
 from ..streaming import video_client as grap_video
 
@@ -43,11 +51,14 @@ BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
 BATTERY_CAPACITY_WH = 10000.0
 
-JETSON_IP = None
+JETSON_IP = os.getenv("JETSON_IP", "10.149.150.143").strip() or None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
 JETSON_VIDEO_PORT = 5000
 JETSON_BACKEND_PORT = 8000
 NETWORK_SCAN_INTERVAL = 30.0
+DETECTION_STALE_SEC = 1.0
+DETECTION_FRAME_LIMIT = 8
+DECISION_STALE_SEC = 3.0
 
 
 def _pil_yuzdesi_voltajdan(voltage):
@@ -73,6 +84,9 @@ class NjordVeriSistemi(QObject):
         self._last_hb = 0.0
         self._connection_started_at = 0.0
         self._heartbeat_seen = False
+        self._vehicle_system_id = None
+        self._vehicle_component_id = None
+        self._ignored_heartbeat_sources = set()
         self._telemetry_lost_reported = False
         self._last_read_error_log = 0.0
         self._watchdog_started = False
@@ -84,6 +98,7 @@ class NjordVeriSistemi(QObject):
 
         self._camera_started = False
         self._camera_running = False
+        self._last_video_frame_time = 0.0
         self._last_network_scan = 0.0
         self._last_logged_jetson_ip = None
         self._last_video_wait_log = 0.0
@@ -112,6 +127,9 @@ class NjordVeriSistemi(QObject):
             "gps_uydu": 0,
             "mesafe": 0.0,
             "decision_log": "System ready. Waiting for connection...",
+            "detection": None,
+            "detections": [],
+            "mission_decision": None,
             "active_mission": None,
             "link_ok": False,
             "heartbeat_seen": False,
@@ -166,6 +184,9 @@ class NjordVeriSistemi(QObject):
             "gps": 0,
             "gps_uydu": 0,
             "mesafe": 0.0,
+            "detection": None,
+            "detections": [],
+            "mission_decision": None,
         }
 
     def _telemetri_kaybi_isle(self, decision_log, physical_disconnect=False):
@@ -239,6 +260,23 @@ class NjordVeriSistemi(QObject):
     def _emit_durum(self):
         with self._lock:
             self._battery_state()
+            now = time.monotonic()
+            detections = [
+                item for item in self._durum.get("detections", [])
+                if now - float(item.get("received_monotonic", 0.0)) <= DETECTION_STALE_SEC
+            ]
+            self._durum["detections"] = detections
+            self._durum["detection"] = (
+                max(detections, key=lambda item: float(item.get("confidence", 0.0)))
+                if detections
+                else None
+            )
+            decision = self._durum.get("mission_decision")
+            if (
+                    isinstance(decision, dict)
+                    and now - float(decision.get("received_monotonic", 0.0)) > DECISION_STALE_SEC
+            ):
+                self._durum["mission_decision"] = None
             kopya = copy.deepcopy(self._durum)
 
         battery = kopya.get("battery") or {}
@@ -460,11 +498,26 @@ class NjordVeriSistemi(QObject):
             return False
 
     def _jetson_reachable(self, ip):
-        # Jetson is active only when its known MAC is present and a GUI service is reachable.
-        if not self._valid_ip(ip) or not self._arp_ip_mac_eslesiyor(JETSON_MAC, ip):
+        # An open Jetson service is stronger evidence than the ARP cache. Windows
+        # may omit or age out the MAC entry while an existing video stream keeps
+        # working, which previously made the UI report WI-FI LOST incorrectly.
+        if not self._valid_ip(ip):
             return False
         backend_port = int(self.backend_client.config.get("backend", {}).get("http_port", JETSON_BACKEND_PORT))
         return self._is_port_open(ip, JETSON_VIDEO_PORT) or self._is_port_open(ip, backend_port)
+
+    def _kamera_karesini_yayinla(self, image):
+        if image is not None:
+            now = time.monotonic()
+            with self._lock:
+                self._last_video_frame_time = now
+                changed = not bool(self._durum.get("wifi_aktif"))
+                self._durum["wifi_aktif"] = True
+                if not self._valid_ip(self._durum.get("jetson_ip")) and JETSON_IP:
+                    self._durum["jetson_ip"] = JETSON_IP
+            if changed:
+                self._emit_durum()
+        self.kamera_sinyali.emit(image)
 
     def _valid_ip(self, value):
         return bool(re.fullmatch(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", str(value)))
@@ -497,6 +550,20 @@ class NjordVeriSistemi(QObject):
     def _wifi_kontrol_dongusu(self):
         while self._aktif:
             bulunan_ip = None
+
+            with self._lock:
+                video_recent = (
+                    self._last_video_frame_time > 0.0
+                    and time.monotonic() - self._last_video_frame_time <= 3.0
+                )
+                current_ip = self._durum.get("jetson_ip")
+            if video_recent:
+                self._set(
+                    wifi_aktif=True,
+                    jetson_ip=current_ip if self._valid_ip(current_ip) else (JETSON_IP or "Connected"),
+                )
+                time.sleep(2.0)
+                continue
 
             if JETSON_IP and self._jetson_reachable(JETSON_IP):
                 self._set(wifi_aktif=True, jetson_ip=JETSON_IP)
@@ -542,6 +609,9 @@ class NjordVeriSistemi(QObject):
             self._last_hb = 0.0
             self._connection_started_at = time.time()
             self._heartbeat_seen = False
+            self._vehicle_system_id = None
+            self._vehicle_component_id = None
+            self._ignored_heartbeat_sources.clear()
             self._telemetry_lost_reported = False
             self._streams_requested = False
             self._mission_uploaded_to_pixhawk = False
@@ -599,6 +669,9 @@ class NjordVeriSistemi(QObject):
             except Exception:
                 pass
         self.connection = None
+        self._vehicle_system_id = None
+        self._vehicle_component_id = None
+        self._ignored_heartbeat_sources.clear()
 
         self._set(
             **self._telemetri_degerlerini_sifirla(),
@@ -686,13 +759,13 @@ class NjordVeriSistemi(QObject):
             try:
                 grap_video.start(
                     jetson_ip=jetson_ip,
-                    frame_callback=self.kamera_sinyali.emit,
+                    frame_callback=self._kamera_karesini_yayinla,
                     log_callback=self._log,
                     stop_callback=lambda: self._camera_running,
                 )
             except TypeError:
                 grap_video.start(
-                    frame_callback=self.kamera_sinyali.emit,
+                    frame_callback=self._kamera_karesini_yayinla,
                     log_callback=self._log,
                     stop_callback=lambda: self._camera_running,
                 )
@@ -775,6 +848,9 @@ class NjordVeriSistemi(QObject):
                 self._log(f"MAVLink message received: {msg_type}")
 
         if msg_type == "HEARTBEAT":
+            if not self._arac_heartbeat_kaynagini_kabul_et(msg):
+                return
+
             self._last_hb = time.time()
             self._heartbeat_seen = True
             self._telemetry_lost_reported = False
@@ -906,6 +982,59 @@ class NjordVeriSistemi(QObject):
             result_name = self._mavlink_result_name(result)
             self._log(f"COMMAND ACK: {command_name} -> {result_name}")
 
+        elif msg_type == "TUNNEL":
+            payload_type = int(getattr(msg, "payload_type", -1))
+            try:
+                payload_length = int(getattr(msg, "payload_length", 0))
+                payload = bytes(msg.payload)[:payload_length]
+            except (AttributeError, TypeError, ValueError) as exc:
+                self._log(f"WARNING: Invalid MAVLink TUNNEL payload: {exc}")
+                return
+
+            if payload_type == DETECTION_PAYLOAD_TYPE:
+                try:
+                    detection = decode_detection_payload(payload)
+                except ValueError as exc:
+                    self._log(f"WARNING: Invalid detection MAVLink payload: {exc}")
+                    return
+
+                detection["received_monotonic"] = time.monotonic()
+                with self._lock:
+                    detections = list(self._durum.get("detections", []))
+
+                    # TUNNEL sends one message per object. Keep messages belonging
+                    # to the same camera frame together, but discard the previous
+                    # frame as soon as the first object from a new frame arrives.
+                    current_frame_id = detections[-1].get("frame_id") if detections else None
+                    if current_frame_id != detection.get("frame_id"):
+                        detections = []
+
+                    # Protect the UI against an accidentally repeated MAVLink
+                    # packet without hiding separate objects from the same frame.
+                    sequence = detection.get("sequence")
+                    if any(item.get("sequence") == sequence for item in detections):
+                        return
+                    detections.append(detection)
+                    detections = detections[-DETECTION_FRAME_LIMIT:]
+                    self._durum["detections"] = detections
+                    self._durum["detection"] = max(
+                        detections,
+                        key=lambda item: float(item.get("confidence", 0.0)),
+                    )
+                self._emit_durum()
+
+            elif payload_type == DECISION_PAYLOAD_TYPE:
+                try:
+                    decision = decode_decision_payload(payload)
+                except ValueError as exc:
+                    self._log(f"WARNING: Invalid decision MAVLink payload: {exc}")
+                    return
+                decision["received_monotonic"] = time.monotonic()
+                with self._lock:
+                    self._durum["mission_decision"] = decision
+                    self._durum["active_mission"] = decision.get("active_mission")
+                self._emit_durum()
+
         elif msg_type == "STATUSTEXT":
             text = getattr(msg, "text", "")
             if isinstance(text, bytes):
@@ -942,6 +1071,51 @@ class NjordVeriSistemi(QObject):
             with self._lock:
                 self._mission_messages.append(msg)
                 self._mission_messages = self._mission_messages[-30:]
+
+    @staticmethod
+    def _arac_heartbeat_mi(msg):
+        """Yalnizca gercek otopilot heartbeat'ini arac durumu olarak kabul et."""
+        mavlink = mavutil.mavlink
+        vehicle_type = getattr(msg, "type", None)
+        autopilot = getattr(msg, "autopilot", None)
+
+        ignored_types = {
+            getattr(mavlink, "MAV_TYPE_GCS", None),
+            getattr(mavlink, "MAV_TYPE_ONBOARD_CONTROLLER", None),
+        }
+        if vehicle_type in ignored_types:
+            return False
+        if autopilot in (None, getattr(mavlink, "MAV_AUTOPILOT_INVALID", None)):
+            return False
+        return True
+
+    def _arac_heartbeat_kaynagini_kabul_et(self, msg):
+        source_system = int(getattr(msg, "get_srcSystem", lambda: 0)() or 0)
+        source_component = int(getattr(msg, "get_srcComponent", lambda: 0)() or 0)
+        source = (source_system, source_component)
+
+        if not self._arac_heartbeat_mi(msg):
+            if source not in self._ignored_heartbeat_sources:
+                self._ignored_heartbeat_sources.add(source)
+                self._log(
+                    "Ignoring non-vehicle heartbeat: "
+                    f"system={source_system}, component={source_component}"
+                )
+            return False
+
+        if self._vehicle_system_id is None:
+            self._vehicle_system_id = source_system
+            self._vehicle_component_id = source_component
+            if self.connection is not None:
+                self.connection.target_system = source_system
+                self.connection.target_component = source_component
+            self._log(
+                "Pixhawk heartbeat source locked: "
+                f"system={source_system}, component={source_component}"
+            )
+            return True
+
+        return source == (self._vehicle_system_id, self._vehicle_component_id)
 
     def _mavlink_streamlerini_iste(self):
         if not self.connection:

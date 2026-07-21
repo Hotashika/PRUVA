@@ -1,6 +1,7 @@
 import os
 import time
 import html
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -203,6 +204,120 @@ class PortEkrani(QDialog):
             ok_button.setText("DISCONNECT")
         else:
             ok_button.setText("CONNECT")
+
+
+class AlgoritmaTespitGrafigi(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._detections = []
+        self.setMinimumHeight(130)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+    def set_detections(self, detections):
+        self._detections = [item for item in (detections or []) if isinstance(item, dict)][-8:]
+        self.update()
+
+    @staticmethod
+    def _class_color(class_name):
+        name = str(class_name or "").lower()
+        if "red" in name:
+            return QColor(231, 76, 60)
+        if "green" in name:
+            return QColor(46, 204, 113)
+        if "orange" in name:
+            return QColor(243, 126, 32)
+        if "yellow" in name:
+            return QColor(241, 196, 15)
+        if "black" in name:
+            return QColor(120, 130, 140)
+        return QColor(0, 210, 255)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(8, 27, 38))
+
+        center = QPointF(self.width() / 2.0, self.height() - 24.0)
+        radius = max(30.0, min(self.width() * 0.46, self.height() - 45.0))
+        painter.setPen(QPen(QColor(88, 155, 180, 100), 1))
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            r = radius * fraction
+            painter.drawArc(QtCore.QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r), 0, 180 * 16)
+        for angle in (-60, -30, 0, 30, 60):
+            radians = math.radians(angle)
+            end = QPointF(center.x() + math.sin(radians) * radius, center.y() - math.cos(radians) * radius)
+            painter.drawLine(center, end)
+
+        painter.setPen(QPen(QColor(0, 210, 255), 2))
+        painter.setBrush(QBrush(QColor(0, 120, 180)))
+        vessel = QPolygonF([QPointF(center.x(), center.y() - 14), QPointF(center.x() + 9, center.y() + 7), QPointF(center.x() - 9, center.y() + 7)])
+        painter.drawPolygon(vessel)
+
+        if not self._detections:
+            painter.setPen(QPen(QColor(220, 230, 235), 1))
+            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            painter.drawText(self.rect(), Qt.AlignCenter, "WAITING FOR DETECTIONS")
+            return
+
+        valid_depths = []
+        for item in self._detections:
+            try:
+                depth = float(item.get("depth", 0.0))
+                if math.isfinite(depth) and depth >= 0.0:
+                    valid_depths.append(depth)
+            except (TypeError, ValueError):
+                continue
+        max_depth = max(10.0, max(valid_depths, default=10.0))
+
+        legend_items = []
+        for index, item in enumerate(self._detections, start=1):
+            try:
+                angle = float(item.get("angle", 0.0))
+                depth = float(item.get("depth", 0.0))
+                confidence = max(0.0, min(float(item.get("confidence", 0.0)), 1.0))
+            except (TypeError, ValueError):
+                continue
+            if not all(math.isfinite(value) for value in (angle, depth, confidence)) or depth < 0.0:
+                continue
+            r = min(depth / max_depth, 1.0) * radius
+            radians = math.radians(max(-90.0, min(angle, 90.0)))
+            point = QPointF(center.x() + math.sin(radians) * r, center.y() - math.cos(radians) * r)
+            name = str(item.get("class_name") or "OBJECT")[:18]
+            color = self._class_color(name)
+            painter.setPen(QPen(QColor(255, 255, 255), 1))
+            painter.setBrush(QBrush(color))
+            painter.drawEllipse(point, 8, 8)
+            painter.setPen(QPen(QColor(255, 255, 255), 1))
+            painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            painter.drawText(
+                QtCore.QRectF(point.x() - 8, point.y() - 8, 16, 16),
+                Qt.AlignCenter,
+                str(index),
+            )
+            legend_items.append(
+                (color, f"{index}  {name} | {depth:.1f} m | {angle:+.1f}° | {confidence * 100:.0f}%")
+            )
+
+        latest = self._detections[-1]
+        painter.setPen(QPen(QColor(230, 240, 245), 1))
+        painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        painter.drawText(
+            10,
+            18,
+            f"CURRENT FRAME: {len(self._detections)} DETECTION(S) | ID: {latest.get('frame_id', '--')}",
+        )
+
+        if legend_items:
+            legend_height = 8 + len(legend_items) * 17
+            legend_width = min(max(250, self.width() - 20), 390)
+            painter.fillRect(QtCore.QRectF(8, 25, legend_width, legend_height), QColor(8, 27, 38, 220))
+            painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            for row, (color, label) in enumerate(legend_items):
+                y = 40 + row * 17
+                painter.setPen(QPen(color, 3))
+                painter.drawLine(14, y - 4, 24, y - 4)
+                painter.setPen(QPen(QColor(235, 242, 245), 1))
+                painter.drawText(30, y, label)
 
 
 class HaritaCizimKatmani(QtWidgets.QWidget):
@@ -747,6 +862,8 @@ class NjordAnaEkran(QMainWindow):
         self._arm_komut_bekliyor = False
         self._arm_komut_hedef = None
         self._arm_komut_baslangic = 0.0
+        self._stop_buton_gorunum_durumu = None
+        self._overview_rendered = {}
         self._kompakt_duzen_aktif = None
         self._restore_boyut_kilitli = False
         self._restore_boyut_kilidi_uygulaniyor = False
@@ -1220,21 +1337,9 @@ class NjordAnaEkran(QMainWindow):
             layout = QtWidgets.QVBoxLayout(self.groupBox_algorithm)
             layout.setContentsMargins(10, 20, 10, 10)
             layout.setSpacing(4)
-            self.LALGORITHM = QtWidgets.QLabel("Waiting for detection / planning data", self.groupBox_algorithm)
-            self.LALGORITHM.setAlignment(ALIGN_CENTER)
-            self.LALGORITHM.setScaledContents(True)
-            self.LALGORITHM.setMinimumHeight(130)
-            self.LALGORITHM.setStyleSheet(
-                "QLabel { background-color: #eaf2f8; color: #0b2239; "
-                "border: 1px solid #7fb3d5; font-size: 11pt; font-weight: bold; }"
-            )
-            layout.addWidget(self.LALGORITHM)
-
-        gorsel_yolu = os.path.join(GORSEL_KLASORU, "colreg.jpeg")
-        if os.path.exists(gorsel_yolu):
-            pixmap = QPixmap(gorsel_yolu)
-            if not pixmap.isNull():
-                self.LALGORITHM.setPixmap(pixmap)
+            self.detection_graph = AlgoritmaTespitGrafigi(self.groupBox_algorithm)
+            self.LALGORITHM = self.detection_graph
+            layout.addWidget(self.detection_graph)
 
         self.groupBox_algorithm.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.LALGORITHM.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
@@ -1273,6 +1378,7 @@ class NjordAnaEkran(QMainWindow):
             self.TXTSTATUSLOG.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
 
         if hasattr(self, "groupBox_8") and hasattr(self, "LLOGIC") and hasattr(self, "TXTCOLREG"):
+            self.groupBox_8.setTitle("DECISION LOGIC")
             decision_layout = self.groupBox_8.layout()
             if isinstance(decision_layout, QtWidgets.QGridLayout):
                 self._layouttan_cikar(self.LLOGIC)
@@ -1289,12 +1395,25 @@ class NjordAnaEkran(QMainWindow):
                 decision_layout.setRowStretch(1, 0)
                 decision_layout.setRowStretch(2, 1)
 
-            self.LLOGIC.setMinimumHeight(34)
-            self.LLOGIC.setMaximumHeight(54)
+            self.LLOGIC.setMinimumHeight(62)
+            self.LLOGIC.setMaximumHeight(82)
             self.LLOGIC.setWordWrap(True)
             self.LLOGIC.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            self.LLOGIC.setStyleSheet(
+                "QLabel { color: #111111; font-family: 'Segoe UI'; "
+                "font-size: 11pt; font-weight: 600; padding: 2px; }"
+            )
             self.TXTCOLREG.setMinimumHeight(110)
             self.TXTCOLREG.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            self.TXTCOLREG.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.TXTCOLREG.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.TXTCOLREG.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
+            self.TXTCOLREG.document().setDocumentMargin(5)
+            self.TXTCOLREG.setStyleSheet(
+                "QTextEdit { background-color: #ffffff; color: #0b2239; "
+                "border: 1px solid #7fb3d5; font-family: 'Segoe UI'; "
+                "font-size: 8pt; font-weight: 600; padding: 2px; }"
+            )
 
     def _batarya_paneli_tek_sutun_yap(self):
         if not hasattr(self, "groupBox_3"):
@@ -1593,7 +1712,7 @@ class NjordAnaEkran(QMainWindow):
             self.LLOGIC.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
             self.TXTCOLREG.setMinimumSize(300, 150)
             self.TXTCOLREG.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-            self.TXTCOLREG.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.TXTCOLREG.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             self.TXTCOLREG.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             self.TXTCOLREG.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
             if hasattr(self, "label_12"):
@@ -1779,14 +1898,7 @@ class NjordAnaEkran(QMainWindow):
         if hasattr(self, "label_20"):
             self.label_20.setStyleSheet("font-size: 11pt; font-weight: bold; color: #0b2239;")
 
-        self.textEdit.setPlainText(
-            "Active COLREG rule: --\n\n"
-            "Situation: --\n\n"
-            "Decision: --\n\n"
-            "Reason: --\n\n"
-            "Collision risk: --\n\n"
-            "Target vessel distance: --"
-        )
+        self.textEdit.setPlainText("DETECTIONS: 0 | FRAME: --\nStatus: No active detection")
 
     def _system_overview_hazirla(self):
         if not hasattr(self, "middlePanel") or self.middlePanel.layout() is None:
@@ -1807,6 +1919,7 @@ class NjordAnaEkran(QMainWindow):
         )
         self._overview_values = {}
         self._overview_titles = {}
+        self._overview_rendered = {}
         for row, (key, title) in enumerate(rows):
             value_label = QtWidgets.QLabel(f"{title}: --", self.groupBox_system_overview)
             value_label.setAlignment(Qt.AlignCenter)
@@ -1837,6 +1950,10 @@ class NjordAnaEkran(QMainWindow):
         if label is None:
             return
         title = getattr(self, "_overview_titles", {}).get(key, key.upper())
+        rendered = (str(title), str(text), str(color))
+        if getattr(self, "_overview_rendered", {}).get(key) == rendered:
+            return
+        self._overview_rendered[key] = rendered
         safe_title = html.escape(str(title))
         safe_text = html.escape(str(text))
         label.setText(
@@ -1858,6 +1975,8 @@ class NjordAnaEkran(QMainWindow):
 
         task_name = mission
         if mission.upper() in ("M1", "M2", "M3", "M4"):
+            task_name = f"TASK {mission[-1]}"
+        elif mission.lower() in ("task1", "task2", "task3", "task4"):
             task_name = f"TASK {mission[-1]}"
         elif mission == "--":
             selected_radios = (
@@ -1886,8 +2005,21 @@ class NjordAnaEkran(QMainWindow):
             "#1e8449" if waypoint_count and task_name != "NOT SELECTED" else "#7f8c8d",
         )
 
+        decision = d.get("mission_decision")
         if not connected:
             mission_status, mission_color = "WAITING FOR VEHICLE", "#c0392b"
+        elif isinstance(decision, dict):
+            mission_status = (
+                f"{decision.get('stage') or 'ACTIVE'} / "
+                f"{float(decision.get('progress_percent', 0.0)):.0f}%"
+            )
+            mission_color = (
+                "#c0392b"
+                if str(decision.get("stage", "")).upper() == "FAILSAFE"
+                else "#b9770e"
+                if decision.get("collision_risk") is True
+                else "#1e8449"
+            )
         elif not waypoint_count:
             mission_status, mission_color = "NOT LOADED", "#b9770e"
         elif armed and mode in ("AUTO", "GUIDED") and mission != "--":
@@ -1983,8 +2115,9 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton_2.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
         self.textEdit.setStyleSheet(
-            "QTextEdit { font-size: 11pt; font-weight: bold; color: #0b2239; "
-            "background-color: #ffffff; border: 1px solid #7fb3d5; padding: 3px; }"
+            "QTextEdit { font-family: 'Segoe UI'; font-size: 8pt; font-weight: 600; "
+            "color: #0b2239; background-color: #ffffff; "
+            "border: 1px solid #7fb3d5; padding: 2px; }"
         )
 
         for etiket in self._log_etiketleri:
@@ -2072,6 +2205,81 @@ class NjordAnaEkran(QMainWindow):
 
         self._kompakt_duzen_aktif = False
 
+    @staticmethod
+    def _detection_metni(d):
+        detections = [item for item in d.get("detections", []) if isinstance(item, dict)]
+        if not detections:
+            return "DETECTIONS: 0 | FRAME: --\nStatus: No active detection"
+
+        lines = [
+            f"DETECTIONS: {len(detections)} | FRAME: {detections[-1].get('frame_id', '--')}",
+        ]
+        visible_detections = detections[:4]
+        for index, detection in enumerate(visible_detections, start=1):
+            try:
+                confidence_text = f"{float(detection['confidence']) * 100.0:.0f}%"
+            except (KeyError, TypeError, ValueError):
+                confidence_text = "--"
+            try:
+                depth_text = f"{float(detection['depth']):.2f} m"
+            except (KeyError, TypeError, ValueError):
+                depth_text = "--"
+            try:
+                angle_text = f"{float(detection['angle']):+.1f}°"
+            except (KeyError, TypeError, ValueError):
+                angle_text = "--"
+            try:
+                position_text = (
+                    f"{float(detection['lat']):.7f}, "
+                    f"{float(detection['lon']):.7f}"
+                )
+            except (KeyError, TypeError, ValueError):
+                position_text = "--"
+
+            lines.extend(
+                [
+                    f"{index}. {detection.get('class_name') or '--'} | {confidence_text} | "
+                    f"{depth_text} | {angle_text}",
+                    f"   GPS: {position_text}",
+                ]
+            )
+        if len(detections) > len(visible_detections):
+            lines.append(f"+{len(detections) - len(visible_detections)} additional detection(s)")
+        return "\n".join(lines)
+
+    def _mission_ozet_metni(self, d):
+        decision = d.get("mission_decision")
+        if not isinstance(decision, dict):
+            mission = str(d.get("active_mission") or "NO MISSION").upper()
+            status, _ = self._vessel_status_bilgisi(d)
+            if mission == "NO MISSION":
+                return (
+                    f"{mission} | {status}\n"
+                    "ACTION: Waiting for mission selection\n"
+                    "WHY: No task is currently active"
+                )
+            return (
+                f"{mission} | {status}\n"
+                "ACTION: Waiting for Jetson decision status\n"
+                "WHY: Mission decision stream not received"
+            )
+
+        mission = str(decision.get("active_mission") or "MISSION").upper()
+        if mission in ("TASK1", "TASK2", "TASK3", "TASK4"):
+            mission = f"TASK {mission[-1]}"
+        stage = str(decision.get("stage") or "ACTIVE").upper()
+        current_target = int(decision.get("current_target", 0) or 0)
+        target_count = int(decision.get("target_count", 0) or 0)
+        progress = float(decision.get("progress_percent", 0.0) or 0.0)
+        target_text = f" | TARGET {current_target}/{target_count}" if target_count else ""
+        action = str(decision.get("action") or "Monitor mission")
+        reason = str(decision.get("reason") or "Mission status update")
+        return (
+            f"{mission} | STAGE: {stage}{target_text} | {progress:.0f}%\n"
+            f"ACTION: {action}\n"
+            f"WHY: {reason}"
+        )
+
     def _decision_metni(self, d):
         colreg = d.get("active_colreg_rule") or d.get("colreg_rule") or d.get("colreg") or "--"
         situation = (
@@ -2134,22 +2342,12 @@ class NjordAnaEkran(QMainWindow):
         telemetry_lost = bool(d.get("telemetry_lost"))
         armed = bool(d.get("armed"))
         mission_active = bool(d.get("active_mission"))
-        system_status = str(d.get("system_status", "") or "").upper()
 
         if not baglanti:
             return "OUT OF CONTROL", "#c0392b"
         if telemetry_lost:
             return "OUT OF CONTROL", "#c0392b"
         if not heartbeat_seen or not link_ok:
-            return "OUT OF CONTROL", "#c0392b"
-        if d.get("radio_failsafe"):
-            return "OUT OF CONTROL", "#c0392b"
-        if (
-            mod == "EMERGENCY"
-            or "FAILSAFE" in system_status
-            or "CRITICAL" in system_status
-            or "EMERGENCY" in system_status
-        ):
             return "OUT OF CONTROL", "#c0392b"
         if not armed:
             return "STANDBY", "#2980b9"
@@ -2226,6 +2424,7 @@ class NjordAnaEkran(QMainWindow):
     def _arac_komutlarini_guncelle(self, bagli):
         aktif = bool(bagli)
         if self._arac_komutlari_aktif == aktif:
+            self._acil_stop_butonunu_guncelle(aktif)
             return
 
         self._arac_komutlari_aktif = aktif
@@ -2234,6 +2433,19 @@ class NjordAnaEkran(QMainWindow):
                 widget.setEnabled(aktif)
         if not aktif:
             self._arac_komutlarini_kilitle()
+        else:
+            self._acil_stop_butonunu_guncelle(True)
+
+    def _acil_stop_butonunu_guncelle(self, bagli):
+        aktif = bool(bagli)
+        durum = (aktif, bool(getattr(self, "_kompakt_duzen_aktif", False)))
+        if self._stop_buton_gorunum_durumu == durum:
+            return
+        self._stop_buton_gorunum_durumu = durum
+        if self.pushButton_7.isEnabled() != aktif:
+            self.pushButton_7.setEnabled(aktif)
+        self.pushButton_7.setStyleSheet(self._acil_stop_stili)
+        self.pushButton_7.setText("EMERGENCY STOP" if aktif else "STOP LOCKED")
 
     def _arac_komutlarini_kilitle(self):
         self._arm_komut_bekliyor = False
@@ -2246,8 +2458,8 @@ class NjordAnaEkran(QMainWindow):
             self.pushButton_4.setText("ARM LOCKED")
         if hasattr(self, "pushButton_8"):
             self.pushButton_8.hide()
-        self.pushButton_7.setStyleSheet(self._acil_stop_stili)
-        self.pushButton_7.setText("STOP LOCKED")
+        self._stop_buton_gorunum_durumu = None
+        self._acil_stop_butonunu_guncelle(False)
         self.pushButton_6.setStyleSheet(self._komut_buton_stili)
         self.pushButton_6.setText("NO VEHICLE")
         self.comboBox_2.setStyleSheet(self._mode_combo_stili)
@@ -2260,7 +2472,7 @@ class NjordAnaEkran(QMainWindow):
         return True
 
     def tazele(self, d):
-        self.pushButton_10.setText(f"YAW: {d.get('yaw', 0.0):.1f}°")
+        self.pushButton_10.setText(f"HEADING: {d.get('yaw', 0.0):.1f}°")
         self.pushButton_5.setText(f"ROLL: {d.get('roll', 0.0):.1f}°")
         self.pushButton_9.setText(f"PITCH: {d.get('pitch', 0.0):.1f}°")
         if self._cog_label is not None:
@@ -2283,6 +2495,8 @@ class NjordAnaEkran(QMainWindow):
                     "speed": d.get("hiz", 0.0),
                 }
             )
+        if hasattr(self, "detection_graph"):
+            self.detection_graph.set_detections(d.get("detections", []))
         if hasattr(self, "LMAPGPS"):
             self.LMAPGPS.setText(f"GPS: {d.get('gps', 0)}")
         if hasattr(self, "LMAPSATS"):
@@ -2290,10 +2504,10 @@ class NjordAnaEkran(QMainWindow):
         if hasattr(self, "LMAPDIST"):
             self.LMAPDIST.setText(f"NEXT WP: {float(d.get('mesafe', 0.0) or 0.0):.1f} m")
         self._batarya_guncelle(d)
-        self.textEdit.setPlainText(self._decision_metni(d))
+        self.textEdit.setPlainText(self._detection_metni(d))
         self._vessel_status_guncelle(d)
         self._system_overview_guncelle(d)
-        self.label_8.setText(d.get("decision_log", "Waiting for mission data..."))
+        self.label_8.setText(self._mission_ozet_metni(d))
 
         bagli = self._arac_bagli_mi(d)
         if bagli:
