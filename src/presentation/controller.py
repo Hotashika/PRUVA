@@ -2475,14 +2475,20 @@ class NjordAnaEkran(QMainWindow):
         self.pushButton_10.setText(f"HEADING: {d.get('yaw', 0.0):.1f}°")
         self.pushButton_5.setText(f"ROLL: {d.get('roll', 0.0):.1f}°")
         self.pushButton_9.setText(f"PITCH: {d.get('pitch', 0.0):.1f}°")
+        armed = bool(d.get("armed"))
+        disarm_requested = bool(d.get("arm_change_pending")) and not bool(
+            d.get("requested_arm_state")
+        )
+        motion_enabled = armed and not disarm_requested
+        displayed_speed = float(d.get("hiz", 0.0) or 0.0) if motion_enabled else 0.0
+        displayed_cog = float(d.get("cog", 0.0) or 0.0) if motion_enabled else 0.0
         if self._cog_label is not None:
-            speed = float(d.get("hiz", 0.0) or 0.0)
-            if speed >= HaritaCizimKatmani.COG_MIN_SPEED_M_S:
-                self._cog_label.setText(f"COG: {float(d.get('cog', 0.0) or 0.0):.1f}°")
+            if displayed_speed >= HaritaCizimKatmani.COG_MIN_SPEED_M_S:
+                self._cog_label.setText(f"COG: {displayed_cog:.1f}°")
             else:
                 self._cog_label.setText("COG: 0.0°")
 
-        self.lcdNumber_3.display(d.get("hiz", 0.0))
+        self.lcdNumber_3.display(displayed_speed)
         self.pushButton_11.setText(str(d.get("lat", 0.0)))
         self.pushButton_12.setText(str(d.get("lon", 0.0)))
         if getattr(self, "_ana_harita_katmani", None) is not None:
@@ -2491,8 +2497,8 @@ class NjordAnaEkran(QMainWindow):
                     "lat": d.get("lat", 0.0),
                     "lon": d.get("lon", 0.0),
                     "yaw": d.get("yaw", 0.0),
-                    "cog": d.get("cog", 0.0),
-                    "speed": d.get("hiz", 0.0),
+                    "cog": displayed_cog,
+                    "speed": displayed_speed,
                 }
             )
         if hasattr(self, "detection_graph"):

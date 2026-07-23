@@ -154,6 +154,16 @@ class NjordVeriSistemi(QObject):
     def _set(self, **kwargs):
         with self._lock:
             self._durum.update(kwargs)
+            armed = bool(self._durum.get("armed"))
+            disarm_requested = bool(self._durum.get("arm_change_pending")) and not bool(
+                self._durum.get("requested_arm_state")
+            )
+            if not armed or disarm_requested:
+                # Central invariant: no telemetry source may leave motion data
+                # non-zero while the vehicle is disarmed or disarming.
+                self._durum["hiz"] = 0.0
+                self._durum["cog"] = 0.0
+                self._filtered_cog = None
         self._emit_durum()
 
     def _snapshot(self):
@@ -876,7 +886,7 @@ class NjordVeriSistemi(QObject):
                         self._durum["decision_log"] = f"CONFIRMED: {mod_name} MODE ACTIVE"
                         self._log(f"SUCCESS: MODE CHANGED TO {mod_name}")
 
-            self._set(
+            heartbeat_updates = dict(
                 armed=armed,
                 mod_id=mod_id,
                 mod=mod_name,
@@ -886,16 +896,30 @@ class NjordVeriSistemi(QObject):
                 heartbeat_seen=True,
                 telemetry_lost=False,
             )
+            if not armed:
+                # Pixhawk can keep reporting a small/noisy GPS groundspeed while
+                # the motors are disarmed. Keep displayed motion at zero until
+                # a later heartbeat confirms that the vehicle is armed.
+                self._filtered_cog = None
+                heartbeat_updates.update(hiz=0.0, cog=0.0)
+            self._set(**heartbeat_updates)
 
         elif msg_type == "VFR_HUD":
             if not self._telemetri_saglikli_mi():
                 self._set(**self._telemetri_degerlerini_sifirla())
                 return
+            with self._lock:
+                armed = bool(self._durum.get("armed"))
+                disarm_requested = bool(self._durum.get("arm_change_pending")) and not bool(
+                    self._durum.get("requested_arm_state")
+                )
             try:
                 groundspeed = float(msg.groundspeed)
             except (TypeError, ValueError):
                 groundspeed = 0.0
             if not math.isfinite(groundspeed) or groundspeed < 0.0:
+                groundspeed = 0.0
+            if not armed or disarm_requested:
                 groundspeed = 0.0
             updates = {"yaw": msg.heading, "hiz": groundspeed}
             if groundspeed < 0.30:
@@ -946,6 +970,11 @@ class NjordVeriSistemi(QObject):
                 "gps": msg.fix_type,
                 "gps_uydu": msg.satellites_visible,
             }
+            with self._lock:
+                armed = bool(self._durum.get("armed"))
+                disarm_requested = bool(self._durum.get("arm_change_pending")) and not bool(
+                    self._durum.get("requested_arm_state")
+                )
             cog_raw = getattr(msg, "cog", 65535)
             velocity_raw = getattr(msg, "vel", 65535)
             if velocity_raw != 65535:
@@ -953,7 +982,10 @@ class NjordVeriSistemi(QObject):
             else:
                 with self._lock:
                     speed = float(self._durum.get("hiz", 0.0) or 0.0)
-            if cog_raw != 65535 and int(getattr(msg, "fix_type", 0)) >= 2:
+            if not armed or disarm_requested:
+                self._filtered_cog = None
+                updates["cog"] = 0.0
+            elif cog_raw != 65535 and int(getattr(msg, "fix_type", 0)) >= 2:
                 updates["cog"] = self._cog_filtrele(float(cog_raw) / 100.0, speed)
             elif speed < 0.30:
                 self._filtered_cog = None
