@@ -52,6 +52,17 @@ BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
 # 6S 10 Ah battery: 22.2 V nominal x 10 Ah = 222 Wh.
 BATTERY_CAPACITY_WH = 222.0
+BATTERY_VOLTAGE_FILTER_ALPHA = 0.20
+BATTERY_SOC_CURVE = (
+    (21.0, 0),
+    (21.6, 10),
+    (22.2, 20),
+    (22.8, 40),
+    (23.4, 60),
+    (24.0, 80),
+    (24.6, 90),
+    (25.2, 100),
+)
 
 JETSON_IP = os.getenv("JETSON_IP", "10.149.150.143").strip() or None
 JETSON_MAC = "8c:b8:7e:04:20:a9"
@@ -66,8 +77,21 @@ SOG_FILTER_ALPHA = 0.35
 
 
 def _pil_yuzdesi_voltajdan(voltage):
-    percent = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100.0
-    return max(0, min(int(round(percent)), 100))
+    voltage = float(voltage or 0.0)
+    if voltage <= BATTERY_SOC_CURVE[0][0]:
+        return 0
+    if voltage >= BATTERY_SOC_CURVE[-1][0]:
+        return 100
+
+    for (low_v, low_percent), (high_v, high_percent) in zip(
+        BATTERY_SOC_CURVE,
+        BATTERY_SOC_CURVE[1:],
+    ):
+        if low_v <= voltage <= high_v:
+            ratio = (voltage - low_v) / (high_v - low_v)
+            percent = low_percent + ratio * (high_percent - low_percent)
+            return max(0, min(int(round(percent)), 100))
+    return 0
 
 
 
@@ -100,6 +124,7 @@ class NjordVeriSistemi(QObject):
         self._mission_messages = []
         self._filtered_cog = None
         self._filtered_sog = 0.0
+        self._filtered_battery_voltage = None
         self._last_sog_reject_log = 0.0
         self._last_radio_failsafe = 0.0
 
@@ -1049,14 +1074,24 @@ class NjordVeriSistemi(QObject):
         elif msg_type == "SYS_STATUS":
             with self._lock:
                 battery = self._battery_state()
-                voltage = msg.voltage_battery / 1000.0
+                raw_voltage = msg.voltage_battery / 1000.0
+                if self._filtered_battery_voltage is None:
+                    self._filtered_battery_voltage = raw_voltage
+                else:
+                    self._filtered_battery_voltage += (
+                        raw_voltage - self._filtered_battery_voltage
+                    ) * BATTERY_VOLTAGE_FILTER_ALPHA
+                voltage = self._filtered_battery_voltage
                 battery["total_voltage"] = voltage
                 try:
-                    percent = int(getattr(msg, "battery_remaining", -1))
+                    reported_percent = int(getattr(msg, "battery_remaining", -1))
                 except (TypeError, ValueError):
-                    percent = -1
-                if percent < 0 or percent > 100:
-                    percent = _pil_yuzdesi_voltajdan(voltage)
+                    reported_percent = -1
+                percent = _pil_yuzdesi_voltajdan(voltage)
+                battery["reported_percentage"] = (
+                    reported_percent if 0 <= reported_percent <= 100 else None
+                )
+                battery["percentage_source"] = "6s_lipo_voltage_estimate"
                 battery["percentage"] = percent
                 battery["remaining_wh"] = BATTERY_CAPACITY_WH * percent / 100.0
             self._emit_durum()

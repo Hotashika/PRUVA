@@ -49,11 +49,33 @@ MAP_CALIBRATION_POINTS = [
 DEFAULT_BATTERY_CAPACITY_WH = 222.0
 BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
+BATTERY_SOC_CURVE = (
+    (21.0, 0),
+    (21.6, 10),
+    (22.2, 20),
+    (22.8, 40),
+    (23.4, 60),
+    (24.0, 80),
+    (24.6, 90),
+    (25.2, 100),
+)
 
 
 def _pil_yuzdesi_voltajdan(voltage):
-    percent = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100.0
-    return max(0, min(int(round(percent)), 100))
+    voltage = float(voltage or 0.0)
+    if voltage <= BATTERY_SOC_CURVE[0][0]:
+        return 0
+    if voltage >= BATTERY_SOC_CURVE[-1][0]:
+        return 100
+    for (low_v, low_percent), (high_v, high_percent) in zip(
+        BATTERY_SOC_CURVE,
+        BATTERY_SOC_CURVE[1:],
+    ):
+        if low_v <= voltage <= high_v:
+            ratio = (voltage - low_v) / (high_v - low_v)
+            percent = low_percent + ratio * (high_percent - low_percent)
+            return max(0, min(int(round(percent)), 100))
+    return 0
 
 
 def _patch_pyqt5_uic_enums():
@@ -1449,7 +1471,7 @@ class NjordAnaEkran(QMainWindow):
             layout.addWidget(voltage_lcd, 2, 0, 1, 2)
 
         if not hasattr(self, "LBATTERYWH"):
-            self.LBATTERYWH = QtWidgets.QLabel("ENERGY LEFT: 0.0 Wh", self.groupBox_3)
+            self.LBATTERYWH = QtWidgets.QLabel("EST. ENERGY LEFT: 0.0 Wh", self.groupBox_3)
 
         energy_style = f"font-size: {9 if kompakt else 10}pt; font-weight: bold; color: #0b2239;"
         self.LBATTERYWH.show()
@@ -2459,14 +2481,10 @@ class NjordAnaEkran(QMainWindow):
     def _batarya_guncelle(self, d):
         battery = d.get("battery", {})
         voltage = float(d.get("voltaj", battery.get("total_voltage", 0.0)) or 0.0)
-        percent_raw = d.get("pil_yuzde", battery.get("percentage"))
-        try:
-            percent = int(round(float(percent_raw)))
-        except (TypeError, ValueError):
-            percent = _pil_yuzdesi_voltajdan(voltage)
-        if percent < 0 or percent > 100:
-            percent = _pil_yuzdesi_voltajdan(voltage)
-        percent = max(0, min(percent, 100))
+        # No current sensor is installed, so Pixhawk's remaining percentage can
+        # remain near 100%. Estimate SOC consistently from the filtered 6S LiPo
+        # pack voltage instead.
+        percent = _pil_yuzdesi_voltajdan(voltage)
         try:
             capacity_wh = float(
                 d.get(
@@ -2484,7 +2502,7 @@ class NjordAnaEkran(QMainWindow):
         if hasattr(self, "lcdNumber_2"):
             self.lcdNumber_2.display(voltage)
         if hasattr(self, "LBATTERYWH"):
-            self.LBATTERYWH.setText(f"ENERGY LEFT: {remaining_wh:.1f} Wh")
+            self.LBATTERYWH.setText(f"EST. ENERGY LEFT: {remaining_wh:.1f} Wh")
 
     def _arac_bagli_mi(self, d):
         return bool(
