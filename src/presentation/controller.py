@@ -1967,7 +1967,12 @@ class NjordAnaEkran(QMainWindow):
         )
 
     def _system_overview_guncelle(self, d):
-        connected = bool(d.get("baglanti") and d.get("link_ok") and not d.get("telemetry_lost"))
+        connected = bool(
+            d.get("baglanti")
+            and d.get("link_ok")
+            and d.get("heartbeat_seen")
+            and not d.get("telemetry_lost")
+        )
         armed = bool(d.get("armed"))
         mode = str(d.get("mod", "UNKNOWN") or "UNKNOWN").upper()
         mission = str(d.get("active_mission") or "--")
@@ -1993,11 +1998,14 @@ class NjordAnaEkran(QMainWindow):
         self._overview_degerini_ayarla(
             "connection", "OK" if connected else "NO LINK", "#1e8449" if connected else "#c0392b"
         )
-        self._overview_degerini_ayarla(
-            "arm",
-            "ARMED" if armed else "DISARMED",
-            "#c0392b" if armed else "#2980b9",
-        )
+        if connected:
+            self._overview_degerini_ayarla(
+                "arm",
+                "ARMED" if armed else "DISARMED",
+                "#c0392b" if armed else "#2980b9",
+            )
+        else:
+            self._overview_degerini_ayarla("arm", "NO DATA", "#7f8c8d")
         mode_color = "#1e8449" if mode in ("AUTO", "GUIDED") else "#b9770e" if connected else "#7f8c8d"
         self._overview_degerini_ayarla("mode", mode, mode_color)
         self._overview_degerini_ayarla(
@@ -2608,15 +2616,13 @@ class NjordAnaEkran(QMainWindow):
                     "background-color: #2ecc71; color: white; "
                     "font-weight: bold; border-radius: 5px;"
                 )
-                self.pushButton_wifi.setText(
-                    f"WI-FI ACTIVE\nIP: {d.get('jetson_ip', '')}"
-                )
+                self.pushButton_wifi.setText("WI-FI ACTIVE")
             else:
                 self.pushButton_wifi.setStyleSheet(
                     "background-color: #e74c3c; color: white; "
                     "font-weight: bold; border-radius: 5px;"
                 )
-                self.pushButton_wifi.setText("WI-FI LOST\nSearching Jetson")
+                self.pushButton_wifi.setText("WI-FI INACTIVE")
 
         self._arac_komutlarini_guncelle(bagli)
         if not bagli:
@@ -2679,6 +2685,25 @@ class NjordAnaEkran(QMainWindow):
     def mod_secildi(self, mod_adi):
         if not self._ui_hazir or not mod_adi or self._komut_engelli_mi():
             return
+        durum = self.sistem.durum_al()
+        dogrulanmis_mod = str(durum.get("mod", "") or "").upper()
+        if dogrulanmis_mod and dogrulanmis_mod != "UNKNOWN":
+            index = self.comboBox_2.findText(dogrulanmis_mod)
+            if index < 0:
+                self.comboBox_2.addItem(dogrulanmis_mod)
+                index = self.comboBox_2.findText(dogrulanmis_mod)
+            if index >= 0:
+                blocker = QtCore.QSignalBlocker(self.comboBox_2)
+                self.comboBox_2.setCurrentIndex(index)
+                del blocker
+        if durum.get("mode_change_pending"):
+            self.sistem.log_sinyali.emit(
+                "INFO: Mode selection is locked until Pixhawk confirms the current request."
+            )
+            return
+        if str(mod_adi).upper() == dogrulanmis_mod:
+            return
+        self.comboBox_2.setEnabled(False)
         self.sistem.mod_ayarla_ad(mod_adi)
 
     def _mode_combo_pixhawk_ile_esitle(self, d):
@@ -2720,10 +2745,15 @@ class NjordAnaEkran(QMainWindow):
         self._mode_combo_aday = None
 
     def _mode_combo_durumunu_guncelle(self, d, bekliyor_stil, aktif_stil):
-        if d.get("mode_change_pending"):
+        pending = bool(d.get("mode_change_pending"))
+        if pending:
             yeni_stil = bekliyor_stil
         else:
             yeni_stil = self._mode_combo_stili
+
+        combo_aktif = bool(self._arac_komutlari_aktif and not pending)
+        if self.comboBox_2.isEnabled() != combo_aktif:
+            self.comboBox_2.setEnabled(combo_aktif)
 
         if self._mode_combo_son_stil != yeni_stil:
             self.comboBox_2.setStyleSheet(yeni_stil)
@@ -2806,14 +2836,14 @@ class NjordAnaEkran(QMainWindow):
                 "font-weight: bold; border-radius: 6px; "
                 "border: 2px solid #c0392b; padding: 8px 18px;"
             )
-            self.pushButton_4.setText("DISARMED")
+            self.pushButton_4.setText("DISARM")
         else:
             self.pushButton_4.setStyleSheet(
                 "background-color: #2ecc71; color: white; "
                 "font-weight: bold; border-radius: 10px; "
                 "border: 2px solid #27ae60; padding: 8px 18px;"
             )
-            self.pushButton_4.setText("ARMED")
+            self.pushButton_4.setText("ARM")
 
     def _armed_butonunu_sabitle(self):
         self._arm_toggle_butonunu_guncelle(True)

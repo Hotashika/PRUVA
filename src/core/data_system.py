@@ -46,6 +46,7 @@ ARDUROVER_MODS = {
 MODE_NAME_TO_ID = {name: mode_id for mode_id, name in ARDUROVER_MODS.items()}
 
 HEARTBEAT_TIMEOUT = 5.0
+MODE_CHANGE_TIMEOUT = 8.0
 ARDUPILOT_FORCE_ARM_MAGIC = 21196
 BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
@@ -83,6 +84,7 @@ class NjordVeriSistemi(QObject):
         self.connection = None
         self._lock = Lock()
         self._aktif = True
+        self._wifi_monitor_running = True
         self._last_hb = 0.0
         self._connection_started_at = 0.0
         self._heartbeat_seen = False
@@ -107,6 +109,7 @@ class NjordVeriSistemi(QObject):
         self._last_logged_jetson_ip = None
         self._last_video_wait_log = 0.0
         self._last_mode_failure_diagnostic = 0.0
+        self._mode_change_requested_at = 0.0
         self.backend_client = BackendClient()
         self._mission_id = None
         self._mission_uploaded_to_pixhawk = False
@@ -208,6 +211,7 @@ class NjordVeriSistemi(QObject):
     def _telemetri_kaybi_isle(self, decision_log, physical_disconnect=False):
         self._mission_uploaded_to_pixhawk = False
         self._telemetry_lost_reported = True
+        self._mode_change_requested_at = 0.0
         self._set(
             **self._telemetri_degerlerini_sifirla(),
             baglanti=not physical_disconnect,
@@ -564,7 +568,9 @@ class NjordVeriSistemi(QObject):
             return False
 
     def _wifi_kontrol_dongusu(self):
-        while self._aktif:
+        # Jetson/Wi-Fi monitoring is independent from the Pixhawk connection.
+        # A telemetry disconnect must not permanently stop network discovery.
+        while self._wifi_monitor_running:
             bulunan_ip = None
 
             with self._lock:
@@ -707,6 +713,7 @@ class NjordVeriSistemi(QObject):
         self._log("CONNECTION CLOSED")
 
     def kapat(self):
+        self._wifi_monitor_running = False
         self.baglanti_kes()
 
     def kamera_oto_baslat(self):
@@ -832,6 +839,28 @@ class NjordVeriSistemi(QObject):
                 baslangictan_beri = time.time() - self._connection_started_at if self._connection_started_at else 0.0
                 telemetry_lost_reported = self._telemetry_lost_reported
                 radio_failsafe = bool(self._durum.get("radio_failsafe"))
+                mode_change_pending = bool(self._durum.get("mode_change_pending"))
+                requested_mode = int(self._durum.get("requested_mode", -1))
+
+            if (
+                mode_change_pending
+                and self._mode_change_requested_at > 0
+                and time.monotonic() - self._mode_change_requested_at > MODE_CHANGE_TIMEOUT
+            ):
+                requested_name = ARDUROVER_MODS.get(requested_mode, f"MODE_{requested_mode}")
+                self._mode_change_requested_at = 0.0
+                self._set(
+                    mode_change_pending=False,
+                    requested_mode=-1,
+                    decision_log=(
+                        f"{requested_name} mode was not confirmed by Pixhawk within "
+                        f"{MODE_CHANGE_TIMEOUT:.0f} seconds. Current mode remains unchanged."
+                    ),
+                )
+                self._log(
+                    f"WARNING: {requested_name} MODE confirmation timed out; "
+                    "using the latest heartbeat mode."
+                )
 
             if baglanti_var and not heartbeat_seen and baslangictan_beri > HEARTBEAT_TIMEOUT:
                 if not telemetry_lost_reported:
@@ -889,6 +918,8 @@ class NjordVeriSistemi(QObject):
                 if self._durum.get("mode_change_pending"):
                     if self._durum.get("requested_mode") == mod_id:
                         self._durum["mode_change_pending"] = False
+                        self._durum["requested_mode"] = -1
+                        self._mode_change_requested_at = 0.0
                         self._durum["decision_log"] = f"CONFIRMED: {mod_name} MODE ACTIVE"
                         self._log(f"SUCCESS: MODE CHANGED TO {mod_name}")
 
@@ -1384,7 +1415,9 @@ class NjordVeriSistemi(QObject):
 
         hold_mode_id = MODE_NAME_TO_ID["HOLD"]
         self._log("SAFETY: ARM requested from GUI. Forcing HOLD before arming.")
-        self._mod_ayarla_mavlink(hold_mode_id)
+        if not self._mod_ayarla_mavlink(hold_mode_id, replace_pending=True):
+            self._log("ERROR: ARM aborted because HOLD mode command could not be sent.")
+            return
         time.sleep(0.2)
 
         if self._arm_disarm_gonder(armed=True, force=True, repeat=3):
@@ -1420,11 +1453,53 @@ class NjordVeriSistemi(QObject):
             return
         self.mod_ayarla(mode_id)
 
-    def _mod_ayarla_mavlink(self, mod_id):
+    def _mode_on_kosullari_uygun_mu(self, mod_id):
+        mod_name = ARDUROVER_MODS.get(mod_id, f"MODE_{mod_id}")
+        if mod_name not in ("AUTO", "GUIDED"):
+            return True
+
+        with self._lock:
+            armed = bool(self._durum.get("armed"))
+            gps_fix = int(self._durum.get("gps", 0) or 0)
+            lat = float(self._durum.get("lat", 0.0) or 0.0)
+            lon = float(self._durum.get("lon", 0.0) or 0.0)
+            mission_ok = bool(self._mission_uploaded_to_pixhawk)
+
+        eksikler = []
+        if not self._telemetri_saglikli_mi():
+            eksikler.append("telemetry link is not healthy")
+        if not armed:
+            eksikler.append("vehicle is not armed")
+        if gps_fix < 3:
+            eksikler.append(f"GPS fix is {gps_fix}; 3D fix is required")
+        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+            eksikler.append("vehicle position is not valid")
+        if mod_name == "AUTO" and not mission_ok:
+            eksikler.append("mission is not verified on Pixhawk")
+
+        if not eksikler:
+            return True
+
+        detay = "; ".join(eksikler)
+        self._set(
+            mode_change_pending=False,
+            requested_mode=-1,
+            decision_log=f"{mod_name} mode blocked: {detay}.",
+        )
+        self._log(f"WARNING: {mod_name} MODE command blocked: {detay}.")
+        return False
+
+    def _mod_ayarla_mavlink(self, mod_id, replace_pending=False):
         mod_name = ARDUROVER_MODS.get(mod_id, f"MODE_{mod_id}")
         if not self.connection:
             self._log("ERROR: No connection for mode change.")
-            return
+            return False
+        with self._lock:
+            if self._durum.get("mode_change_pending") and not replace_pending:
+                self._log("INFO: A mode change is already waiting for Pixhawk confirmation.")
+                return False
+        if not self._mode_on_kosullari_uygun_mu(mod_id):
+            return False
 
         try:
             target_system = self.connection.target_system or 1
@@ -1433,14 +1508,23 @@ class NjordVeriSistemi(QObject):
                 mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                 mod_id,
             )
+            self._mode_change_requested_at = time.monotonic()
             self._set(
                 requested_mode=mod_id,
                 mode_change_pending=True,
                 decision_log=f"MAVLink MODE command sent: {mod_name}. Waiting for heartbeat confirmation...",
             )
             self._log(f"MAVLink MODE command sent: {mod_name} ({mod_id})")
+            return True
         except Exception as exc:
+            self._mode_change_requested_at = 0.0
+            self._set(
+                mode_change_pending=False,
+                requested_mode=-1,
+                decision_log=f"{mod_name} mode command could not be sent: {exc}",
+            )
             self._log(f"ERROR: MAVLink MODE command failed: {exc}")
+            return False
 
     def _mode_degisim_red_nedenlerini_logla(self):
         simdi = time.time()
@@ -1478,7 +1562,7 @@ class NjordVeriSistemi(QObject):
         if eksikler:
             detay = "; ".join(eksikler)
             self._log(f"MODE CHANGE BLOCKED CHECK ({requested_mode_name}): {detay}.")
-            self._set(decision_log=f"{requested_mode_name} rejected by Pixhawk: {detay}.")
+            decision_log = f"{requested_mode_name} rejected by Pixhawk: {detay}."
         else:
             self._log(
                 "MODE CHANGE BLOCKED CHECK "
@@ -1487,12 +1571,16 @@ class NjordVeriSistemi(QObject):
                 f"lat={lat:.7f}, lon={lon:.7f}, mission_verified={mission_ok}). "
                 "Check Pixhawk pre-arm/failsafe/EKF messages in Mission Planner."
             )
-            self._set(
-                decision_log=(
-                    f"{requested_mode_name} rejected by Pixhawk. GUI prerequisites look OK; "
-                    "check Pixhawk EKF, failsafe, and mode settings."
-                )
+            decision_log = (
+                f"{requested_mode_name} rejected by Pixhawk. GUI prerequisites look OK; "
+                "check Pixhawk EKF, failsafe, and mode settings."
             )
+        self._mode_change_requested_at = 0.0
+        self._set(
+            mode_change_pending=False,
+            requested_mode=-1,
+            decision_log=decision_log,
+        )
 
     def _mission_mesaji_bekle(self, beklenen_tipler, timeout=8.0):
         deadline = time.time() + timeout
@@ -2216,13 +2304,9 @@ class NjordVeriSistemi(QObject):
 
     def _acil_durum_mavlink(self):
         self._rc_stop_gonder()
-        self._mod_ayarla_mavlink(4)
+        self._mod_ayarla_mavlink(4, replace_pending=True)
         self._disarm_yap_mavlink()
         self._set(
-            mod="HOLD",
-            mod_id=4,
-            requested_mode=4,
-            mode_change_pending=True,
             decision_log="!!! EMERGENCY STOP ACTIVE: HOLD + DISARM requested !!!",
         )
         self._log("!!! MAVLink EMERGENCY STOP: HOLD + DISARM !!!")
