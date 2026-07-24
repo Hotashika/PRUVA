@@ -2209,10 +2209,11 @@ class NjordAnaEkran(QMainWindow):
     def _detection_metni(d):
         detections = [item for item in d.get("detections", []) if isinstance(item, dict)]
         if not detections:
-            return "DETECTIONS: 0 | FRAME: --\nStatus: No active detection"
+            return "Active detections: 0 | Camera frame: --\nNo active detection"
 
         lines = [
-            f"DETECTIONS: {len(detections)} | FRAME: {detections[-1].get('frame_id', '--')}",
+            f"Active detections: {len(detections)} | "
+            f"Camera frame: {detections[-1].get('frame_id', '--')}",
         ]
         visible_detections = detections[:4]
         for index, detection in enumerate(visible_detections, start=1):
@@ -2238,9 +2239,9 @@ class NjordAnaEkran(QMainWindow):
 
             lines.extend(
                 [
-                    f"{index}. {detection.get('class_name') or '--'} | {confidence_text} | "
-                    f"{depth_text} | {angle_text}",
-                    f"   GPS: {position_text}",
+                    f"Object {index}: {detection.get('class_name') or '--'} | "
+                    f"Confidence: {confidence_text} | Object depth: {depth_text}",
+                    f"Relative angle: {angle_text} | Object position: {position_text}",
                 ]
             )
         if len(detections) > len(visible_detections):
@@ -2271,13 +2272,73 @@ class NjordAnaEkran(QMainWindow):
         current_target = int(decision.get("current_target", 0) or 0)
         target_count = int(decision.get("target_count", 0) or 0)
         progress = float(decision.get("progress_percent", 0.0) or 0.0)
-        target_text = f" | TARGET {current_target}/{target_count}" if target_count else ""
+        target_text = f" | WP {current_target}/{target_count}" if target_count else ""
         action = str(decision.get("action") or "Monitor mission")
         reason = str(decision.get("reason") or "Mission status update")
+
+        valid_detections = []
+        for detection in d.get("detections", []):
+            if not isinstance(detection, dict):
+                continue
+            try:
+                depth = float(detection.get("depth"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(depth) and depth > 0.0:
+                valid_detections.append((depth, detection))
+
+        if valid_detections:
+            depth, nearest = min(valid_detections, key=lambda item: item[0])
+            class_name = str(nearest.get("class_name") or "Unknown object")
+            class_name = class_name.replace("_", " ").capitalize()
+            try:
+                angle = float(nearest.get("angle"))
+            except (TypeError, ValueError):
+                angle = float("nan")
+            if math.isfinite(angle):
+                if angle > 0.5:
+                    side = "starboard"
+                elif angle < -0.5:
+                    side = "port"
+                else:
+                    side = "ahead"
+                angle_text = f"{angle:+.1f}° {side}"
+            else:
+                angle_text = "angle --"
+            try:
+                confidence = float(nearest.get("confidence")) * 100.0
+            except (TypeError, ValueError):
+                confidence = float("nan")
+            confidence_text = f"{confidence:.0f}%" if math.isfinite(confidence) else "--"
+            observation = (
+                f"{class_name} | {depth:.2f} m | {angle_text} | {confidence_text}"
+            )
+        else:
+            observation = "No active object detection"
+
+        try:
+            waypoint_distance = float(d.get("mesafe", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            waypoint_distance = 0.0
+        try:
+            heading = float(d.get("yaw", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            heading = 0.0
+        armed = bool(d.get("armed"))
+        disarm_requested = bool(d.get("arm_change_pending")) and not bool(
+            d.get("requested_arm_state")
+        )
+        try:
+            sog = float(d.get("hiz", 0.0) or 0.0) if armed and not disarm_requested else 0.0
+        except (TypeError, ValueError):
+            sog = 0.0
         return (
-            f"{mission} | STAGE: {stage}{target_text} | {progress:.0f}%\n"
+            f"{mission} | {stage}{target_text} | {progress:.0f}%\n"
+            f"OBSERVATION: {observation}\n"
+            f"WHY: {reason}\n"
             f"ACTION: {action}\n"
-            f"WHY: {reason}"
+            f"STATUS: WP distance {waypoint_distance:.1f} m | "
+            f"Heading {heading:.1f}° | SOG {sog:.1f} m/s"
         )
 
     def _decision_metni(self, d):

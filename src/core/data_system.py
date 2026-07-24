@@ -59,6 +59,8 @@ NETWORK_SCAN_INTERVAL = 30.0
 DETECTION_STALE_SEC = 1.0
 DETECTION_FRAME_LIMIT = 8
 DECISION_STALE_SEC = 3.0
+MAX_VALID_SOG_M_S = float(os.getenv("NJORD_MAX_VALID_SOG_M_S", "12.0"))
+SOG_FILTER_ALPHA = 0.35
 
 
 def _pil_yuzdesi_voltajdan(voltage):
@@ -94,6 +96,8 @@ class NjordVeriSistemi(QObject):
         self._seen_message_types = set()
         self._mission_messages = []
         self._filtered_cog = None
+        self._filtered_sog = 0.0
+        self._last_sog_reject_log = 0.0
         self._last_radio_failsafe = 0.0
 
         self._camera_started = False
@@ -164,6 +168,7 @@ class NjordVeriSistemi(QObject):
                 self._durum["hiz"] = 0.0
                 self._durum["cog"] = 0.0
                 self._filtered_cog = None
+                self._filtered_sog = 0.0
         self._emit_durum()
 
     def _snapshot(self):
@@ -183,6 +188,7 @@ class NjordVeriSistemi(QObject):
 
     def _telemetri_degerlerini_sifirla(self):
         self._filtered_cog = None
+        self._filtered_sog = 0.0
         return {
             "hiz": 0.0,
             "yaw": 0.0,
@@ -905,6 +911,8 @@ class NjordVeriSistemi(QObject):
             self._set(**heartbeat_updates)
 
         elif msg_type == "VFR_HUD":
+            if not self._kilitli_arac_kaynagi_mi(msg):
+                return
             if not self._telemetri_saglikli_mi():
                 self._set(**self._telemetri_degerlerini_sifirla())
                 return
@@ -913,17 +921,13 @@ class NjordVeriSistemi(QObject):
                 disarm_requested = bool(self._durum.get("arm_change_pending")) and not bool(
                     self._durum.get("requested_arm_state")
                 )
-            try:
-                groundspeed = float(msg.groundspeed)
-            except (TypeError, ValueError):
-                groundspeed = 0.0
-            if not math.isfinite(groundspeed) or groundspeed < 0.0:
-                groundspeed = 0.0
+            # SOG is updated only from GPS_RAW_INT.vel below. VFR_HUD may be
+            # relayed by other MAVLink participants and must not drive speed.
+            updates = {"yaw": msg.heading}
             if not armed or disarm_requested:
-                groundspeed = 0.0
-            updates = {"yaw": msg.heading, "hiz": groundspeed}
-            if groundspeed < 0.30:
+                updates["hiz"] = 0.0
                 self._filtered_cog = None
+                self._filtered_sog = 0.0
                 updates["cog"] = 0.0
             self._set(**updates)
 
@@ -966,6 +970,8 @@ class NjordVeriSistemi(QObject):
             self._set(**updates)
 
         elif msg_type == "GPS_RAW_INT":
+            if not self._kilitli_arac_kaynagi_mi(msg):
+                return
             updates = {
                 "gps": msg.fix_type,
                 "gps_uydu": msg.satellites_visible,
@@ -978,14 +984,30 @@ class NjordVeriSistemi(QObject):
             cog_raw = getattr(msg, "cog", 65535)
             velocity_raw = getattr(msg, "vel", 65535)
             if velocity_raw != 65535:
-                speed = float(velocity_raw) / 100.0
+                speed = self._sog_filtrele(float(velocity_raw) / 100.0)
             else:
                 with self._lock:
                     speed = float(self._durum.get("hiz", 0.0) or 0.0)
             if not armed or disarm_requested:
+                speed = 0.0
+                updates["hiz"] = 0.0
                 self._filtered_cog = None
+                self._filtered_sog = 0.0
                 updates["cog"] = 0.0
-            elif cog_raw != 65535 and int(getattr(msg, "fix_type", 0)) >= 2:
+            elif int(getattr(msg, "fix_type", 0)) < 3:
+                speed = 0.0
+                updates["hiz"] = 0.0
+                self._filtered_cog = None
+                self._filtered_sog = 0.0
+                updates["cog"] = 0.0
+            else:
+                updates["hiz"] = speed
+            if (
+                    armed
+                    and not disarm_requested
+                    and cog_raw != 65535
+                    and int(getattr(msg, "fix_type", 0)) >= 3
+            ):
                 updates["cog"] = self._cog_filtrele(float(cog_raw) / 100.0, speed)
             elif speed < 0.30:
                 self._filtered_cog = None
@@ -1149,6 +1171,17 @@ class NjordVeriSistemi(QObject):
 
         return source == (self._vehicle_system_id, self._vehicle_component_id)
 
+    def _kilitli_arac_kaynagi_mi(self, msg):
+        """Hız/GPS telemetrisini yalnızca kilitlenmiş Pixhawk kaynağından kabul et."""
+        if self._vehicle_system_id is None or self._vehicle_component_id is None:
+            return False
+        source_system = int(getattr(msg, "get_srcSystem", lambda: 0)() or 0)
+        source_component = int(getattr(msg, "get_srcComponent", lambda: 0)() or 0)
+        return (source_system, source_component) == (
+            self._vehicle_system_id,
+            self._vehicle_component_id,
+        )
+
     def _mavlink_streamlerini_iste(self):
         if not self.connection:
             return
@@ -1191,6 +1224,37 @@ class NjordVeriSistemi(QObject):
         difference = (candidate - self._filtered_cog + 180.0) % 360.0 - 180.0
         self._filtered_cog = (self._filtered_cog + difference * 0.25) % 360.0
         return self._filtered_cog
+
+    def _sog_filtrele(self, candidate):
+        """GPS SOG değerini doğrula ve ekrandaki ani sıçramaları yumuşat."""
+        try:
+            candidate = float(candidate)
+        except (TypeError, ValueError):
+            candidate = float("nan")
+
+        if (
+                not math.isfinite(candidate)
+                or candidate < 0.0
+                or candidate > MAX_VALID_SOG_M_S
+        ):
+            now = time.time()
+            if now - self._last_sog_reject_log > 2.0:
+                self._last_sog_reject_log = now
+                self._log(
+                    "WARNING: Invalid GPS SOG rejected: "
+                    f"{candidate!r} m/s (limit {MAX_VALID_SOG_M_S:.1f} m/s)"
+                )
+            return float(self._filtered_sog or 0.0)
+
+        if candidate < 0.05:
+            candidate = 0.0
+        previous = float(self._filtered_sog or 0.0)
+        self._filtered_sog = (
+            candidate
+            if previous <= 0.0
+            else previous + (candidate - previous) * SOG_FILTER_ALPHA
+        )
+        return self._filtered_sog
 
     def _mesaj_araliklarini_iste(self, target_system, target_component):
         mesajlar = {

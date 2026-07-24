@@ -570,8 +570,8 @@
                 <bool>true</bool>
                </property>
                <property name="plainText">
-                <string>DETECTIONS: 0 | FRAME: --
-Status: No active detection</string>
+                <string>Active detections: 0 | Camera frame: --
+No active detection</string>
                </property>
               </widget>
              </item>
