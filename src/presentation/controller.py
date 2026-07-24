@@ -45,7 +45,8 @@ MAP_CALIBRATION_POINTS = [
     {"name": "WP5", "lat": 37.9510589, "lon": 32.5006807, "pixel": (190, 694)},
     {"name": "WP6", "lat": 37.9516681, "lon": 32.5006807, "pixel": (194, 374)},
 ]
-DEFAULT_BATTERY_CAPACITY_WH = 10000.0
+# 6S 10 Ah battery: 22.2 V nominal x 10 Ah = 222 Wh.
+DEFAULT_BATTERY_CAPACITY_WH = 222.0
 BATTERY_EMPTY_VOLTAGE = 21.0
 BATTERY_FULL_VOLTAGE = 25.2
 
@@ -2466,7 +2467,18 @@ class NjordAnaEkran(QMainWindow):
         if percent < 0 or percent > 100:
             percent = _pil_yuzdesi_voltajdan(voltage)
         percent = max(0, min(percent, 100))
-        remaining_wh = DEFAULT_BATTERY_CAPACITY_WH * percent / 100.0
+        try:
+            capacity_wh = float(
+                d.get(
+                    "capacity_wh",
+                    battery.get("capacity_wh", DEFAULT_BATTERY_CAPACITY_WH),
+                )
+            )
+        except (TypeError, ValueError):
+            capacity_wh = DEFAULT_BATTERY_CAPACITY_WH
+        if capacity_wh <= 0:
+            capacity_wh = DEFAULT_BATTERY_CAPACITY_WH
+        remaining_wh = capacity_wh * percent / 100.0
 
         self.progressBar.setValue(percent)
         if hasattr(self, "lcdNumber_2"):
